@@ -1,0 +1,6 @@
+{
+  "include": ["src/wcpan"],
+  "exclude": ["src/wcpan/synology/cli.py"],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "strict"
+}
