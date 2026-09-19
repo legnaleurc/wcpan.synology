@@ -1,6 +1,6 @@
 [project]
 name = "wcpan-synology"
-version = "0.1.0"
+version = "0.2.0"
 description = "Async client for the Synology Drive WebStation API"
 authors = [
     { name = "Wei-Cheng Pan", email = "legnaleurc@gmail.com" }
