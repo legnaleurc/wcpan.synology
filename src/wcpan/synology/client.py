@@ -14,13 +14,13 @@ from .errors import (
     SynologyUploadError,
 )
 from .types import (
-    FileIdentifier,
     JsonValue,
-    ParentParameter,
-    PathParameter,
     SynologyAsyncTaskResponse,
     SynologyFileInfo,
     SynologyFileListResponse,
+    SynologyLookupRef,
+    SynologyNodeRef,
+    SynologyParentRef,
     SynologyTaskInfo,
     SynologyWebhookCreateResponse,
     SynologyWebhookInfo,
@@ -54,7 +54,7 @@ class SynologyClient:
     ) -> JsonValue:
         return await self._transport.request(api, version, method, **params)
 
-    async def get_file(self, path: PathParameter) -> SynologyFileInfo | None:
+    async def get_file(self, path: SynologyLookupRef) -> SynologyFileInfo | None:
         return await self._transport.request(
             FILES_API,
             FILES_VERSION,
@@ -64,7 +64,7 @@ class SynologyClient:
 
     async def list_folder(
         self,
-        path: PathParameter,
+        path: SynologyLookupRef,
         *,
         offset: int = 0,
         limit: int = 1000,
@@ -85,7 +85,7 @@ class SynologyClient:
 
     async def create_folder(
         self,
-        parent_path: ParentParameter,
+        parent_path: SynologyParentRef,
         name: str,
     ) -> SynologyFileInfo:
         name = unicodedata.normalize("NFC", name)
@@ -114,7 +114,7 @@ class SynologyClient:
 
     async def rename(
         self,
-        path: PathParameter,
+        path: SynologyLookupRef,
         new_name: str,
     ) -> SynologyFileInfo:
         new_name = unicodedata.normalize("NFC", new_name)
@@ -137,8 +137,8 @@ class SynologyClient:
 
     async def move(
         self,
-        node_id: FileIdentifier,
-        new_parent_path: ParentParameter,
+        node_id: SynologyNodeRef,
+        new_parent_path: SynologyParentRef,
     ) -> None:
         data: SynologyAsyncTaskResponse = await self._transport.request(
             FILES_API,
@@ -150,7 +150,7 @@ class SynologyClient:
         )
         await self.wait_task(data["async_task_id"])
 
-    async def delete(self, node_id: FileIdentifier) -> None:
+    async def delete(self, node_id: SynologyNodeRef) -> None:
         data: SynologyAsyncTaskResponse = await self._transport.request(
             FILES_API,
             FILES_VERSION,
@@ -181,7 +181,7 @@ class SynologyClient:
 
     async def upload(
         self,
-        parent_path: ParentParameter,
+        parent_path: SynologyParentRef,
         name: str,
         data: AsyncIterable[bytes],
         *,
@@ -226,7 +226,7 @@ class SynologyClient:
 
     def download(
         self,
-        node_id: FileIdentifier,
+        node_id: SynologyNodeRef,
         *,
         range_: slice | None = None,
     ) -> AbstractAsyncContextManager[ClientResponse]:
@@ -270,7 +270,7 @@ class SynologyClient:
 async def _download(
     *,
     transport: SynologyTransport,
-    node_id: FileIdentifier,
+    node_id: SynologyNodeRef,
     range_: slice | None,
 ) -> AsyncGenerator[ClientResponse]:
     extra_headers: dict[str, str] | None = None

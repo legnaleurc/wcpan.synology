@@ -10,13 +10,13 @@ from .errors import (
     SynologyUploadError,
 )
 from .types import (
-    FileIdentifier,
     JsonValue,
-    ParentParameter,
-    PathParameter,
     SynologyChildRef,
     SynologyFileId,
     SynologyFileInfo,
+    SynologyLookupRef,
+    SynologyNodeRef,
+    SynologyParentRef,
     SynologyPath,
     SynologyPermanentLink,
     SynologyWebhookEvent,
@@ -25,10 +25,7 @@ from .types import (
 
 
 __all__ = (
-    "FileIdentifier",
     "JsonValue",
-    "ParentParameter",
-    "PathParameter",
     "SynologyApiError",
     "SynologyAuthenticationError",
     "SynologyChildRef",
@@ -36,8 +33,11 @@ __all__ = (
     "SynologyError",
     "SynologyFileId",
     "SynologyFileInfo",
+    "SynologyLookupRef",
     "SynologyNameTooLongError",
     "SynologyNetworkError",
+    "SynologyNodeRef",
+    "SynologyParentRef",
     "SynologyPermanentUploadError",
     "SynologyPath",
     "SynologyPermanentLink",

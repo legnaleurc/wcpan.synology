@@ -22,17 +22,17 @@ class SynologyPermanentLink:
     permanent_link: str
 
 
-type FileIdentifier = SynologyFileId | SynologyPermanentLink
-type ParentParameter = SynologyPath | SynologyFileId
+type SynologyNodeRef = SynologyFileId | SynologyPermanentLink
+type SynologyParentRef = SynologyPath | SynologyFileId
 
 
 @dataclass(frozen=True)
 class SynologyChildRef:
-    parent_ref: ParentParameter
+    parent_ref: SynologyParentRef
     name: str
 
 
-type PathParameter = (
+type SynologyLookupRef = (
     SynologyPath | SynologyFileId | SynologyPermanentLink | SynologyChildRef
 )
 
@@ -104,7 +104,7 @@ class SynologyAsyncTaskResponse(TypedDict):
     async_task_id: str
 
 
-def to_path_parameter_value(value: PathParameter) -> str:
+def to_path_parameter_value(value: SynologyLookupRef) -> str:
     if isinstance(value, SynologyPath):
         return value.path
     if isinstance(value, SynologyFileId):
@@ -114,13 +114,13 @@ def to_path_parameter_value(value: PathParameter) -> str:
     return f"link:{value.permanent_link}"
 
 
-def to_file_identifier_value(value: FileIdentifier) -> str:
+def to_file_identifier_value(value: SynologyNodeRef) -> str:
     if isinstance(value, SynologyFileId):
         return f"id:{value.file_id}"
     return f"link:{value.permanent_link}"
 
 
-def to_parent_parameter_value(value: ParentParameter) -> str:
+def to_parent_parameter_value(value: SynologyParentRef) -> str:
     if isinstance(value, SynologyPath):
         return value.path
     # Child-addressing with `id:<id>/<name>` is already documented and
