@@ -345,7 +345,9 @@ Observed compatibility notes:
 
 - The WebStation API index advertises `requestFormat: JSON` for these namespaces.
 - In practice, the working transport is query-string RPC with JSON-encoded parameter values.
-- Scalar fields such as `webhook_id` and `app_id` must be JSON-encoded as strings.
+- `webhook_id` and `app_id` must be JSON-encoded as strings.
+- In both requests and responses (including webhook list items), `app_id` and `webhook_id` are strings containing integers, e.g. `"0"` and `"123"`.
+- Invalid `app_id` values (for example, `"my-app"`) silently convert to `0` on the server.
 - Array-valued fields such as `files` must be JSON-stringified inside a single query parameter.
 
 Working example:
@@ -1073,8 +1075,8 @@ Response:
     "type": "url",
     "url": "https://example.invalid/webhook",
     "token": "",
-    "app_id": "<app-id>",
-    "webhook_id": "<webhook-id>"
+    "app_id": "123",
+    "webhook_id": "123"
   }
 }
 ```
@@ -1094,8 +1096,8 @@ Observed live-verified transport:
   - `version=2`
   - `method=get`
   - `_sid=<sid>`
-  - `webhook_id="<webhook-id>"`
-  - `app_id="<app-id>"`
+  - `webhook_id="123"`
+  - `app_id="123"`
 
 Response:
 
@@ -1137,8 +1139,8 @@ Observed live-verified transport:
   - `version=2`
   - `method=delete`
   - `_sid=<sid>`
-  - `webhook_id="<webhook-id>"`
-  - `app_id="<app-id>"`
+  - `webhook_id="123"`
+  - `app_id="123"`
 
 Response:
 
@@ -1166,8 +1168,8 @@ Response:
         "type": "url",
         "url": "https://example.invalid/webhook",
         "token": "",
-        "app_id": "<app-id>",
-        "webhook_id": "<webhook-id>"
+        "app_id": "123",
+        "webhook_id": "123"
       }
     ]
   }
@@ -1194,7 +1196,7 @@ Important incompatibilities from the REST-style API shape:
 1. Calls go to `/webapi/entry.cgi` with `api`, `version`, and `method`, not resource paths.
 2. Authentication uses `_sid`.
 3. Normal requests are query-string RPC calls.
-4. Parameter values are JSON-encoded, including scalar ids like `app_id` and `webhook_id`.
+4. Parameter values are JSON-encoded: `app_id` and `webhook_id` are strings containing integers.
 5. Array params such as `files` must be JSON-stringified.
 6. Upload uses multipart and places `api`, `version`, `method`, and `_sid` in the query string.
 7. `move` success must be confirmed with `SYNO.SynologyDrive.Tasks.get`.

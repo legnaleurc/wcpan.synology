@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -254,6 +255,12 @@ def generic_param_argument() -> dict[str, Any]:
             "help": "Extra JSON-decoded RPC parameter.",
         },
     }
+
+
+def parse_integer_string_id(value: str) -> str:
+    if re.fullmatch(r"-?[0-9]+", value) is None:
+        raise argparse.ArgumentTypeError("id must be a string containing an integer")
+    return value
 
 
 def merge_params_with_required(*field_names: str):
@@ -573,7 +580,11 @@ API_CATALOG = {
                 "args": [
                     {
                         "flags": ["--app-id"],
-                        "kwargs": {"required": True, "help": "Webhook application id."},
+                        "kwargs": {
+                            "required": True,
+                            "type": parse_integer_string_id,
+                            "help": 'App id (integer string, e.g. "0").',
+                        },
                     },
                     {
                         "flags": ["--url"],
@@ -587,7 +598,7 @@ API_CATALOG = {
                 ],
                 "params": merge_params_with_required("app_id", "url", "type"),
                 "example": (
-                    'wcpan-synology webhooks create --app-id "my-app" '
+                    "wcpan-synology webhooks create --app-id 123 "
                     '--url "https://example.test/hook"'
                 ),
             },
@@ -596,17 +607,25 @@ API_CATALOG = {
                 "args": [
                     {
                         "flags": ["--app-id"],
-                        "kwargs": {"required": True, "help": "Webhook application id."},
+                        "kwargs": {
+                            "required": True,
+                            "type": parse_integer_string_id,
+                            "help": 'App id (integer string, e.g. "0").',
+                        },
                     },
                     {
                         "flags": ["--webhook-id"],
-                        "kwargs": {"required": True, "help": "Webhook id."},
+                        "kwargs": {
+                            "required": True,
+                            "type": parse_integer_string_id,
+                            "help": 'Webhook id (integer string, e.g. "123").',
+                        },
                     },
                     generic_param_argument(),
                 ],
                 "params": merge_params_with_required("app_id", "webhook_id"),
                 "example": (
-                    'wcpan-synology webhooks get --app-id "my-app" --webhook-id "123"'
+                    'wcpan-synology webhooks get --app-id 123 --webhook-id "123"'
                 ),
             },
             "update": {
@@ -614,11 +633,19 @@ API_CATALOG = {
                 "args": [
                     {
                         "flags": ["--app-id"],
-                        "kwargs": {"required": True, "help": "Webhook application id."},
+                        "kwargs": {
+                            "required": True,
+                            "type": parse_integer_string_id,
+                            "help": 'App id (integer string, e.g. "0").',
+                        },
                     },
                     {
                         "flags": ["--webhook-id"],
-                        "kwargs": {"required": True, "help": "Webhook id."},
+                        "kwargs": {
+                            "required": True,
+                            "type": parse_integer_string_id,
+                            "help": 'Webhook id (integer string, e.g. "123").',
+                        },
                     },
                     {
                         "flags": ["--url"],
@@ -637,7 +664,7 @@ API_CATALOG = {
                     "url",
                 ),
                 "example": (
-                    'wcpan-synology webhooks update --app-id "my-app" '
+                    "wcpan-synology webhooks update --app-id 123 "
                     '--webhook-id "123" --url "https://example.test/new-hook"'
                 ),
             },
@@ -646,18 +673,25 @@ API_CATALOG = {
                 "args": [
                     {
                         "flags": ["--app-id"],
-                        "kwargs": {"required": True, "help": "Webhook application id."},
+                        "kwargs": {
+                            "required": True,
+                            "type": parse_integer_string_id,
+                            "help": 'App id (integer string, e.g. "0").',
+                        },
                     },
                     {
                         "flags": ["--webhook-id"],
-                        "kwargs": {"required": True, "help": "Webhook id."},
+                        "kwargs": {
+                            "required": True,
+                            "type": parse_integer_string_id,
+                            "help": 'Webhook id (integer string, e.g. "123").',
+                        },
                     },
                     generic_param_argument(),
                 ],
                 "params": merge_params_with_required("app_id", "webhook_id"),
                 "example": (
-                    "wcpan-synology webhooks delete --app-id "
-                    '"my-app" --webhook-id "123"'
+                    'wcpan-synology webhooks delete --app-id 123 --webhook-id "123"'
                 ),
             },
             "list": {
@@ -665,12 +699,16 @@ API_CATALOG = {
                 "args": [
                     {
                         "flags": ["--app-id"],
-                        "kwargs": {"required": True, "help": "Webhook application id."},
+                        "kwargs": {
+                            "required": True,
+                            "type": parse_integer_string_id,
+                            "help": 'App id (integer string, e.g. "0").',
+                        },
                     },
                     generic_param_argument(),
                 ],
                 "params": merge_params_with_required("app_id"),
-                "example": 'wcpan-synology webhooks list --app-id "my-app"',
+                "example": "wcpan-synology webhooks list --app-id 123",
             },
         },
     },

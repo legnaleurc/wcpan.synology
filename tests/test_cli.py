@@ -42,7 +42,7 @@ class TestHelpSurface(TestCase):
             "--otp-code=123456",
         ]
         commands = [
-            ["webhooks", "list", "--app-id=my-app"],
+            ["webhooks", "list", "--app-id=123"],
             ["call", "--api=example", "--version=1", "--method=list"],
         ]
         for command in commands:
@@ -117,3 +117,33 @@ class TestHelpSurface(TestCase):
 
         self.assertIn("Create a webhook", output.getvalue())
         self.assertIn("Example:", output.getvalue())
+
+
+class TestWebhookAppId(TestCase):
+    def test_integer_string_app_id_for_each_method(self) -> None:
+        for method in ("create", "get", "update", "delete", "list"):
+            with self.subTest(method=method):
+                command = ["webhooks", method, "--app-id", "123"]
+                if method in ("get", "update", "delete"):
+                    command += ["--webhook-id", "456"]
+                if method == "create":
+                    command += ["--url", "https://example.test/hook"]
+                args = build_parser().parse_args(command)
+                self.assertIs(type(args.app_id), str)
+                self.assertEqual("123", args.app_id)
+                with patch("sys.stderr", StringIO()):
+                    with self.assertRaises(SystemExit) as caught:
+                        build_parser().parse_args(command + ["--app-id", "my-app"])
+                self.assertEqual(2, caught.exception.code)
+
+    def test_integer_string_webhook_id_for_each_method(self) -> None:
+        for method in ("get", "update", "delete"):
+            with self.subTest(method=method):
+                command = ["webhooks", method, "--app-id", "0", "--webhook-id"]
+                args = build_parser().parse_args(command + ["123"])
+                self.assertIs(type(args.webhook_id), str)
+                self.assertEqual("123", args.webhook_id)
+                with patch("sys.stderr", StringIO()):
+                    with self.assertRaises(SystemExit) as caught:
+                        build_parser().parse_args(command + ["hook-id"])
+                self.assertEqual(2, caught.exception.code)

@@ -61,6 +61,8 @@ class SynologyFileListResponse(TypedDict):
 
 
 class SynologyWebhookInfo(TypedDict):
+    """Webhook data with app_id and webhook_id as strings containing integers."""
+
     webhook_id: str
     app_id: str
     type: str

@@ -662,7 +662,7 @@ paths:
                   method: create
                   _sid: <sid>
                   type: url
-                  app_id: <app-id>
+                  app_id: "123"
                   url: https://example.invalid/webhook
       responses:
         "200":
@@ -2019,6 +2019,8 @@ components:
           $ref: "#/components/schemas/WebhookOptions"
         app_id:
           type: string
+          pattern: \'^-?[0-9]+$\'
+          description: String containing an integer, for requests and responses.
         token:
           type: string
         url:
@@ -2030,6 +2032,8 @@ components:
           enum: [shared_library, url]
         webhook_id:
           type: string
+          pattern: \'^-?[0-9]+$\'
+          description: String containing an integer, for requests and responses.
 
     WebhookInfoResponse:
       type: object
@@ -2102,6 +2106,8 @@ components:
               enum: [shared_library, url]
             app_id:
               type: string
+              pattern: \'^-?[0-9]+$\'
+              description: String containing an integer, for requests and responses.
 
     WebhooksGetForm:
       allOf:
@@ -2114,8 +2120,12 @@ components:
               const: get
             webhook_id:
               type: string
+              pattern: \'^-?[0-9]+$\'
+              description: String containing an integer, for requests and responses.
             app_id:
               type: string
+              pattern: \'^-?[0-9]+$\'
+              description: String containing an integer, for requests and responses.
 
     WebhooksUpdateForm:
       allOf:
@@ -2128,8 +2138,12 @@ components:
               const: update
             webhook_id:
               type: string
+              pattern: \'^-?[0-9]+$\'
+              description: String containing an integer, for requests and responses.
             app_id:
               type: string
+              pattern: \'^-?[0-9]+$\'
+              description: String containing an integer, for requests and responses.
             options:
               oneOf:
                 - $ref: "#/components/schemas/WebhookOptions"
@@ -2156,8 +2170,12 @@ components:
               const: delete
             webhook_id:
               type: string
+              pattern: \'^-?[0-9]+$\'
+              description: String containing an integer, for requests and responses.
             app_id:
               type: string
+              pattern: \'^-?[0-9]+$\'
+              description: String containing an integer, for requests and responses.
 
     WebhooksListForm:
       allOf:
@@ -2170,6 +2188,8 @@ components:
               const: list
             app_id:
               type: string
+              pattern: \'^-?[0-9]+$\'
+              description: String containing an integer, for requests and responses.
 
     ObservedRpcForm:
       type: object
