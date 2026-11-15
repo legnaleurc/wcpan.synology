@@ -34,6 +34,28 @@ class TestParseParams(TestCase):
 
 
 class TestHelpSurface(TestCase):
+    def test_auth_options_preserved_at_each_command_level(self) -> None:
+        auth = [
+            "--base-url=https://nas.example:5001",
+            "--username=user",
+            "--password=secret",
+            "--otp-code=123456",
+        ]
+        commands = [
+            ["webhooks", "list", "--app-id=my-app"],
+            ["call", "--api=example", "--version=1", "--method=list"],
+        ]
+        for command in commands:
+            for position in range(len(command)):
+                with self.subTest(command=command, position=position):
+                    args = build_parser().parse_args(
+                        command[:position] + auth + command[position:]
+                    )
+                    self.assertEqual("https://nas.example:5001", args.base_url)
+                    self.assertEqual("user", args.username)
+                    self.assertEqual("secret", args.password)
+                    self.assertEqual("123456", args.otp_code)
+
     def test_parse_namespaced_command(self) -> None:
         parser = build_parser()
 

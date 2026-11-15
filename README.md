@@ -30,6 +30,9 @@ uv run wcpan-synology help files list
 uv run wcpan-synology files list --help
 ```
 
+Login options (`--base-url`, `--username`, `--password`, and `--otp-code`) can
+appear before the command or after subcommands.
+
 Namespaced API call:
 
 ```bash

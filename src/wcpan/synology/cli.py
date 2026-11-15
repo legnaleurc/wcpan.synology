@@ -20,6 +20,7 @@ def main() -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     auth_parent = build_auth_parent_parser()
+    subcommand_auth_parent = build_auth_parent_parser(suppress_defaults=True)
     parser = argparse.ArgumentParser(
         prog="wcpan-synology",
         description="Synology WebStation API client and inspector.",
@@ -28,8 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    add_generic_call_parser(subparsers, auth_parent=auth_parent)
-    add_namespaced_parsers(subparsers, auth_parent=auth_parent)
+    add_generic_call_parser(subparsers, auth_parent=subcommand_auth_parent)
+    add_namespaced_parsers(subparsers, auth_parent=subcommand_auth_parent)
 
     help_parser = subparsers.add_parser(
         "help",
@@ -41,8 +42,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def build_auth_parent_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(add_help=False)
+def build_auth_parent_parser(
+    *, suppress_defaults: bool = False
+) -> argparse.ArgumentParser:
+    # Subcommands must preserve auth values already parsed at an outer level.
+    parser = argparse.ArgumentParser(
+        add_help=False,
+        argument_default=argparse.SUPPRESS if suppress_defaults else None,
+    )
     parser.add_argument(
         "--base-url",
         help="DSM base URL such as https://nas.example:5001",
