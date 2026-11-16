@@ -1,5 +1,8 @@
 """Interpret only Drive Files codes supported by observed UI behavior."""
 
+from collections.abc import Mapping
+from typing import Any, cast
+
 from .exceptions import (
     SynologyApiError,
     SynologyBusyError,
@@ -13,10 +16,40 @@ from .exceptions import (
     SynologyNotFoundError,
     SynologyPathTooLongError,
     SynologyPermissionError,
+    SynologyProtocolError,
     SynologyQuotaExceededError,
     SynologyStorageFullError,
     SynologyUnsupportedError,
+    SynologyUploadBusyError,
+    SynologyUploadConflictError,
+    SynologyUploadDirectoryNotFoundError,
+    SynologyUploadError,
+    SynologyUploadFileTooLargeError,
+    SynologyUploadInvalidNameError,
+    SynologyUploadInvalidOperationError,
+    SynologyUploadLockedError,
+    SynologyUploadNameTooLongError,
+    SynologyUploadNotFoundError,
+    SynologyUploadPathTooLongError,
+    SynologyUploadPermissionError,
+    SynologyUploadProtocolError,
+    SynologyUploadQuotaExceededError,
+    SynologyUploadStorageFullError,
+    SynologyUploadUnsupportedError,
 )
+
+
+def response_object(value: object, message: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise SynologyProtocolError(message, payload=value)
+    return cast(dict[str, Any], value)
+
+
+def response_field(data: Mapping[str, Any], key: str, expected: type) -> Any:
+    value = data.get(key)
+    if not isinstance(value, expected):
+        raise SynologyProtocolError(f"Invalid response field {key!r}", payload=data)
+    return value
 
 
 def file_error(error: SynologyApiError) -> SynologyApiError:
@@ -55,3 +88,31 @@ def file_error(error: SynologyApiError) -> SynologyApiError:
     if cls is None or isinstance(error, cls):
         return error
     return cls(str(error), error_code=error.error_code, payload=error.payload)
+
+
+def upload_error(error: SynologyApiError, file_name: str) -> SynologyUploadError:
+    mapped = file_error(error)
+    classes: dict[type[SynologyApiError], type[SynologyUploadError]] = {
+        SynologyProtocolError: SynologyUploadProtocolError,
+        SynologyConflictError: SynologyUploadConflictError,
+        SynologyPermissionError: SynologyUploadPermissionError,
+        SynologyNotFoundError: SynologyUploadNotFoundError,
+        SynologyDirectoryNotFoundError: SynologyUploadDirectoryNotFoundError,
+        SynologyInvalidOperationError: SynologyUploadInvalidOperationError,
+        SynologyUnsupportedError: SynologyUploadUnsupportedError,
+        SynologyStorageFullError: SynologyUploadStorageFullError,
+        SynologyQuotaExceededError: SynologyUploadQuotaExceededError,
+        SynologyBusyError: SynologyUploadBusyError,
+        SynologyInvalidNameError: SynologyUploadInvalidNameError,
+        SynologyFileTooLargeError: SynologyUploadFileTooLargeError,
+        SynologyPathTooLongError: SynologyUploadPathTooLongError,
+        SynologyNameTooLongError: SynologyUploadNameTooLongError,
+        SynologyLockedError: SynologyUploadLockedError,
+    }
+    cls = classes.get(type(mapped), SynologyUploadError)
+    return cls(
+        str(error),
+        file_name=file_name,
+        error_code=error.error_code,
+        payload=error.payload,
+    )

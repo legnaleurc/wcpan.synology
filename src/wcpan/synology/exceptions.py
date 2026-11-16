@@ -2,10 +2,6 @@ class SynologyError(Exception):
     pass
 
 
-class SynologyAuthenticationError(SynologyError):
-    pass
-
-
 class SynologyApiError(SynologyError):
     def __init__(
         self,
@@ -17,6 +13,14 @@ class SynologyApiError(SynologyError):
         super().__init__(message)
         self.error_code = error_code
         self.payload = payload
+
+
+class SynologyAuthenticationError(SynologyApiError):
+    """The authentication API rejected the login."""
+
+
+class SynologyProtocolError(SynologyApiError):
+    """The server returned an invalid or unexpected response."""
 
 
 class SynologyNotFoundError(SynologyApiError):
@@ -96,11 +100,79 @@ class SynologyPermanentUploadError(SynologyUploadError):
     retryable = False
 
 
-class SynologyNameTooLongError(SynologyPermanentUploadError):
+class SynologyNameTooLongError(SynologyApiError):
     """Synology rejected the destination name as too long."""
-
-    reason = "name_too_long"
 
 
 class SynologyUploadConflictError(SynologyUploadError, SynologyConflictError):
+    pass
+
+
+class SynologyUploadProtocolError(SynologyUploadError, SynologyProtocolError):
+    pass
+
+
+class SynologyUploadPermissionError(SynologyUploadError, SynologyPermissionError):
+    pass
+
+
+class SynologyUploadNotFoundError(SynologyUploadError, SynologyNotFoundError):
+    pass
+
+
+class SynologyUploadDirectoryNotFoundError(
+    SynologyUploadNotFoundError, SynologyDirectoryNotFoundError
+):
+    pass
+
+
+class SynologyUploadInvalidOperationError(
+    SynologyUploadError, SynologyInvalidOperationError
+):
+    pass
+
+
+class SynologyUploadUnsupportedError(SynologyUploadError, SynologyUnsupportedError):
+    pass
+
+
+class SynologyUploadStorageFullError(SynologyUploadError, SynologyStorageFullError):
+    pass
+
+
+class SynologyUploadQuotaExceededError(
+    SynologyUploadStorageFullError, SynologyQuotaExceededError
+):
+    pass
+
+
+class SynologyUploadBusyError(SynologyUploadError, SynologyBusyError):
+    pass
+
+
+class SynologyUploadInvalidNameError(
+    SynologyPermanentUploadError, SynologyInvalidNameError
+):
+    pass
+
+
+class SynologyUploadFileTooLargeError(
+    SynologyPermanentUploadError, SynologyFileTooLargeError
+):
+    pass
+
+
+class SynologyUploadPathTooLongError(
+    SynologyPermanentUploadError, SynologyPathTooLongError
+):
+    pass
+
+
+class SynologyUploadNameTooLongError(
+    SynologyPermanentUploadError, SynologyNameTooLongError
+):
+    reason = "name_too_long"
+
+
+class SynologyUploadLockedError(SynologyUploadError, SynologyLockedError):
     pass

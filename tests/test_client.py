@@ -81,7 +81,7 @@ class TestClientUpload(IsolatedAsyncioTestCase):
 
         with self.assertRaises(SynologyNetworkError) as caught:
             await client.upload(SynologyPath("id:parent"), "file.bin", chunks())
-        self.assertIs(caught.exception.original_error, error)
+        self.assertIs(caught.exception.original_error, error.original_error)
         self.assertIs(caught.exception.__cause__, error)
         self.assertIn("file.bin", str(caught.exception))
 
@@ -139,15 +139,16 @@ class TestTaskPolling(IsolatedAsyncioTestCase):
 
 
 class TestPathParameters(IsolatedAsyncioTestCase):
-    async def test_get_file_returns_none_for_empty_success_payload(self) -> None:
+    async def test_get_file_returns_file_info(self) -> None:
         transport = MagicMock()
-        transport.request = AsyncMock(return_value=None)
+        info = make_file_info("id", "file.bin")
+        transport.request = AsyncMock(return_value=info)
 
         result = await SynologyClient(transport=transport).get_file(
-            SynologyFileId("missing")
+            SynologyFileId("id")
         )
 
-        self.assertIsNone(result)
+        self.assertIs(result, info)
 
     async def test_get_file_propagates_api_error(self) -> None:
         error = SynologyApiError("permission denied", error_code=105)

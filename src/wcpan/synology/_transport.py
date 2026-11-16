@@ -1,20 +1,54 @@
+import asyncio
 import json
 import secrets
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
-from aiohttp import ClientResponse, ClientSession
+from aiohttp import ClientError, ClientResponse, ClientSession
 
+from ._errors import response_object
 from .exceptions import (
     SynologyApiError,
     SynologyAuthenticationError,
     SynologyNetworkError,
+    SynologyProtocolError,
 )
 
 
 def encode_rpc_value(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+
+
+async def read_rpc_response(
+    response: ClientResponse,
+    operation: str,
+    error_class: type[SynologyApiError] = SynologyApiError,
+) -> Any:
+    try:
+        payload = await response.json(content_type=None)
+    except ValueError as exc:
+        raise SynologyProtocolError(
+            f"{operation} returned invalid JSON", payload=await response.text()
+        ) from exc
+    payload = response_object(payload, f"{operation} returned an invalid envelope")
+    if type(payload.get("success")) is not bool:
+        raise SynologyProtocolError(
+            f"{operation} returned an invalid envelope", payload=payload
+        )
+    if not payload["success"]:
+        error = response_object(
+            payload.get("error"), f"{operation} returned an invalid error"
+        )
+        if type(error.get("code")) is not int:
+            raise SynologyProtocolError(
+                f"{operation} returned an invalid error", payload=payload
+            )
+        code = error["code"]
+        raise error_class(
+            f"{operation} failed with code {code}", error_code=code, payload=payload
+        )
+    return payload.get("data")
 
 
 async def login(
@@ -42,18 +76,16 @@ async def login(
             params=params,
         ) as response:
             response.raise_for_status()
-            payload = await response.json(content_type=None)
-    except Exception as exc:
-        raise SynologyAuthenticationError(str(exc)) from exc
-    if not payload.get("success", False):
-        error = payload.get("error", {})
-        raise SynologyAuthenticationError(
-            f"Login failed with error code {error.get('code', 'unknown')}"
-        )
-    sid = payload.get("data", {}).get("sid")
-    if not sid:
-        raise SynologyAuthenticationError("No session token in response")
-    return str(sid)
+            data = await read_rpc_response(
+                response, "Login", SynologyAuthenticationError
+            )
+    except (ClientError, asyncio.TimeoutError, OSError) as exc:
+        raise SynologyNetworkError(str(exc), exc) from exc
+    data = response_object(data, "Invalid login response")
+    sid = data.get("sid")
+    if not isinstance(sid, str) or not sid:
+        raise SynologyProtocolError("No session token in response", payload=data)
+    return sid
 
 
 async def logout(session: ClientSession, *, base_url: str, sid: str) -> None:
@@ -102,20 +134,9 @@ class SynologyTransport:
                 params=query,
             ) as response:
                 response.raise_for_status()
-                payload = await response.json(content_type=None)
-        except SynologyApiError:
-            raise
-        except Exception as exc:
+                return await read_rpc_response(response, f"{api}.{method}")
+        except (ClientError, asyncio.TimeoutError, OSError) as exc:
             raise SynologyNetworkError(str(exc), exc) from exc
-        if not payload.get("success", False):
-            error = payload.get("error", {})
-            code = error.get("code")
-            raise SynologyApiError(
-                f"{api}.{method} failed with code {code}",
-                error_code=code,
-                payload=payload,
-            )
-        return payload.get("data")
 
     @asynccontextmanager
     async def download(
@@ -142,7 +163,7 @@ class SynologyTransport:
                 headers=extra_headers or {},
             )
             response.raise_for_status()
-        except Exception as exc:
+        except (ClientError, asyncio.TimeoutError, OSError) as exc:
             raise SynologyNetworkError(str(exc), exc) from exc
         try:
             yield response
@@ -167,10 +188,21 @@ class SynologyTransport:
             "method": method,
             "_sid": self._sid,
         }
+        source_error: Exception | None = None
+
+        async def source() -> AsyncIterator[bytes]:
+            nonlocal source_error
+            try:
+                async for chunk in file_data:
+                    yield chunk
+            except Exception as exc:
+                source_error = exc
+                raise
+
         content_type, body = build_multipart_body(
             form_fields=form_fields,
             file_name=file_name,
-            file_data=file_data,
+            file_data=source(),
             file_content_type=mime_type,
         )
         try:
@@ -181,20 +213,15 @@ class SynologyTransport:
                 data=body,
             ) as response:
                 response.raise_for_status()
-                payload = await response.json(content_type=None)
-        except SynologyApiError:
-            raise
+                return await read_rpc_response(response, f"{api}.{method}")
         except Exception as exc:
-            raise SynologyNetworkError(str(exc), exc) from exc
-        if not payload.get("success", False):
-            error = payload.get("error", {})
-            code = error.get("code")
-            raise SynologyApiError(
-                f"{api}.{method} failed with code {code}",
-                error_code=code,
-                payload=payload,
-            )
-        return payload.get("data")
+            if source_error is not None:
+                if source_error is exc:
+                    raise
+                raise source_error from None
+            if isinstance(exc, (ClientError, asyncio.TimeoutError, OSError)):
+                raise SynologyNetworkError(str(exc), exc) from exc
+            raise
 
 
 def build_multipart_body(

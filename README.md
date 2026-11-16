@@ -104,7 +104,7 @@ Uploads use the normalized name for both the destination path and multipart
 filename. Scalar multipart fields intentionally omit `Content-Type`; only the
 file part includes it, matching behavior verified against Synology servers.
 
-Errors from typed Files methods use Synology-specific exceptions, not Python's
+Errors from typed Files RPC methods use Synology-specific exceptions, not Python's
 local filesystem exceptions. They inherit `SynologyApiError` and retain
 `error_code`, the original response in `payload`, and the underlying error as
 `__cause__` when translated:
@@ -112,7 +112,7 @@ local filesystem exceptions. They inherit `SynologyApiError` and retain
 | Drive Files codes | Exception / behavior |
 | --- | --- |
 | 1002, 1068, 1070 | `SynologyPermissionError` |
-| 1003 | `SynologyNotFoundError`; `get_file()` returns `None` |
+| 1003 | `SynologyNotFoundError` |
 | 1005, 1008 | `SynologyDirectoryNotFoundError` (also `SynologyNotFoundError`) |
 | 1009, 1010, 1024, 1025 | `SynologyInvalidOperationError` |
 | 1011 | `SynologyUnsupportedError` |
@@ -127,26 +127,39 @@ local filesystem exceptions. They inherit `SynologyApiError` and retain
 | 1069 | `SynologyLockedError` |
 
 See [the error model](docs/error-model.md) for the evidence, scope, inheritance,
-and deliberately uninterpreted cases. Missing required directories still raise;
-`get_file()` treats only code 1003 as an absent result.
+and deliberately uninterpreted cases. `get_file()` raises for missing files.
+Codes 1005/1008 distinguish missing directories; the server may also report a
+missing directory as 1003. Catch `SynologyNotFoundError` for any absence.
 
 These meanings are derived from the Drive web UI's `Utils.initErrorStr()` and
 navigation error handlers (TI97 bundles), and the missing-file behavior was
 observed against Files v11. They are scoped to the Files API, not assumed for
 Webhooks or other API families. Completed file-operation task failures use the
 same mapping. Unknown errors remain `SynologyApiError`; generic `call()` always
-preserves raw API errors. Downloads retain their streaming transport behavior;
-they do not interpret file contents as API errors.
+preserves raw API errors. `download()` is excluded from the semantic mapping:
+it retains streaming transport behavior and does not interpret file contents
+as API errors. HTTP download errors raise `SynologyNetworkError`.
 
 Upload connection failures raise `SynologyNetworkError`, preserving the original
 error for retry decisions. Folder creation, rename, and upload retain the
 existing `SynologyUploadConflictError` for code 1022; it is also a
-`SynologyConflictError`. Name-too-long errors retain
-`SynologyPermanentUploadError`, `retryable = False`, `reason = "name_too_long"`,
-and the destination `file_name`, including for rename. Other recognized upload
-errors use the semantic exceptions above; unknown upload errors remain
-`SynologyUploadError`, which now also inherits `SynologyApiError` and preserves
-the code and payload. All exceptions are available from `wcpan.synology`.
+`SynologyConflictError`. Recognized upload failures inherit both
+`SynologyUploadError` and their semantic exception, and retain `file_name`,
+`error_code`, and `payload`. Invalid names, oversized files, and excessive path
+or name lengths also inherit `SynologyPermanentUploadError` (`retryable = False`).
+The contextual name-too-long class is `SynologyUploadNameTooLongError`, also a
+`SynologyNameTooLongError`, with `reason = "name_too_long"`; create/rename retain
+this contextual behavior. Other Files operations use the neutral
+`SynologyNameTooLongError`. Unknown upload codes raise `SynologyUploadError`.
+Exceptions from the upload data iterator propagate unchanged.
+
+Login transport failures raise `SynologyNetworkError`; rejected logins raise
+`SynologyAuthenticationError`, retaining the server code and payload.
+Malformed RPC envelopes, invalid JSON, missing login tokens, and invalid lookup
+or task data raise `SynologyProtocolError` (a `SynologyApiError`). Upload protocol
+errors also inherit `SynologyUploadError`. Generic `call()` permits empty
+successful data; `get_file()` requires a file object. All exceptions are available
+from `wcpan.synology`.
 
 ## Development
 

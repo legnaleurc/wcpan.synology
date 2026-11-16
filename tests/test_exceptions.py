@@ -16,7 +16,9 @@ from wcpan.synology import (
     SynologyNotFoundError,
     SynologyPath,
     SynologyPathTooLongError,
+    SynologyPermanentUploadError,
     SynologyPermissionError,
+    SynologyProtocolError,
     SynologyQuotaExceededError,
     SynologyStorageFullError,
     SynologyUnsupportedError,
@@ -38,9 +40,13 @@ class TestFileErrors(IsolatedAsyncioTestCase):
         self.transport.request = AsyncMock(side_effect=error)
         return error
 
-    async def test_missing_lookup_returns_none(self):
-        self.fail_request(1003)
-        self.assertIsNone(await self.client.get_file(SynologyFileId("absent")))
+    async def test_missing_lookup_raises_not_found(self):
+        raw = self.fail_request(1003)
+        with self.assertRaises(SynologyNotFoundError) as caught:
+            await self.client.get_file(SynologyFileId("absent"))
+        self.assertEqual(caught.exception.error_code, 1003)
+        self.assertIs(caught.exception.payload, raw.payload)
+        self.assertIs(caught.exception.__cause__, raw)
 
     async def test_files_errors_preserve_diagnostics(self):
         for code, cls in [
@@ -161,5 +167,109 @@ class TestFileErrors(IsolatedAsyncioTestCase):
         async def chunks():
             yield b"data"
 
-        with self.assertRaises(SynologyPermissionError):
+        with self.assertRaises(SynologyPermissionError) as caught:
             await self.client.upload(SynologyPath("/parent"), "file", chunks())
+        self.assertIsInstance(caught.exception, SynologyUploadError)
+        self.assertEqual(caught.exception.file_name, "file")
+
+    async def test_upload_errors_keep_semantics_and_context(self):
+        for code, cls in [
+            (1003, SynologyNotFoundError),
+            (1005, SynologyDirectoryNotFoundError),
+            (1009, SynologyInvalidOperationError),
+            (1011, SynologyUnsupportedError),
+            (1014, SynologyStorageFullError),
+            (1016, SynologyQuotaExceededError),
+            (1018, SynologyBusyError),
+            (1032, SynologyInvalidNameError),
+            (1033, SynologyFileTooLargeError),
+            (1034, SynologyPathTooLongError),
+            (1035, SynologyNameTooLongError),
+            (1069, SynologyLockedError),
+        ]:
+            with self.subTest(code=code):
+                raw = self.fail_request(code)
+                self.transport.upload = AsyncMock(side_effect=raw)
+
+                async def chunks():
+                    yield b"data"
+
+                with self.assertRaises(SynologyUploadError) as caught:
+                    await self.client.upload(SynologyPath("/parent"), "file", chunks())
+                self.assertIsInstance(caught.exception, cls)
+                self.assertEqual(caught.exception.file_name, "file")
+                self.assertEqual(caught.exception.error_code, code)
+                self.assertIs(caught.exception.payload, raw.payload)
+                self.assertIs(caught.exception.__cause__, raw)
+                if code in (1032, 1033, 1034, 1035):
+                    self.assertIsInstance(
+                        caught.exception, SynologyPermanentUploadError
+                    )
+                    self.assertFalse(caught.exception.retryable)
+
+    async def test_generic_name_too_long_is_not_upload_error(self):
+        self.fail_request(1035)
+        with self.assertRaises(SynologyNameTooLongError) as caught:
+            await self.client.get_file(SynologyFileId("file"))
+        self.assertNotIsInstance(caught.exception, SynologyUploadError)
+
+    async def test_get_file_rejects_missing_data(self):
+        for data in (None, [], "file"):
+            with self.subTest(data=data):
+                self.transport.request = AsyncMock(return_value=data)
+                with self.assertRaises(SynologyProtocolError):
+                    await self.client.get_file(SynologyFileId("file"))
+
+    async def test_typed_methods_reject_malformed_data(self):
+        operations = [
+            lambda: self.client.list_folder(SynologyPath("/")),
+            lambda: self.client.move(SynologyFileId("file"), SynologyPath("/")),
+            lambda: self.client.delete(SynologyFileId("file")),
+            lambda: self.client.list_webhooks(app_id="1"),
+            lambda: self.client.create_webhook(app_id="1", url="https://example.test"),
+        ]
+        for operation in operations:
+            for data in (None, {}, {"items": None, "total": "1"}):
+                with self.subTest(operation=operation, data=data):
+                    self.transport.request = AsyncMock(return_value=data)
+                    with self.assertRaises(SynologyProtocolError):
+                        await operation()
+
+    async def test_upload_protocol_failure_keeps_upload_context(self):
+        self.transport.upload = AsyncMock(return_value=None)
+
+        async def chunks():
+            yield b"data"
+
+        with self.assertRaises(SynologyUploadError) as caught:
+            await self.client.upload(SynologyPath("/parent"), "file", chunks())
+        self.assertIsInstance(caught.exception, SynologyProtocolError)
+        self.assertEqual(caught.exception.file_name, "file")
+
+    async def test_delete_task_failure_is_semantic(self):
+        payload = {"status": "finished", "result": {"errors": [{"code": 1003}]}}
+        self.transport.request = AsyncMock(
+            side_effect=[{"async_task_id": "task"}, payload]
+        )
+        with patch("wcpan.synology.client.asyncio.sleep", new_callable=AsyncMock):
+            with self.assertRaises(SynologyNotFoundError) as caught:
+                await self.client.delete(SynologyFileId("file"))
+        self.assertIs(caught.exception.payload, payload)
+        self.assertEqual(caught.exception.__cause__.error_code, 1003)
+
+    async def test_malformed_task_results_raise_protocol_error(self):
+        for data in (
+            None,
+            {},
+            {"status": "finished", "result": {}},
+            {"status": "finished", "result": {"errors": [{}]}},
+            {"status": "finished", "result": {"errors": [None]}},
+            {"status": "finished", "result": {"errors": [{"code": "1003"}]}},
+        ):
+            with self.subTest(data=data):
+                self.transport.request = AsyncMock(return_value=data)
+                with patch(
+                    "wcpan.synology.client.asyncio.sleep", new_callable=AsyncMock
+                ):
+                    with self.assertRaises(SynologyProtocolError):
+                        await self.client.wait_task("task")

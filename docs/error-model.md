@@ -1,10 +1,11 @@
 # Drive error interpretation
 
 The transport raises `SynologyApiError` for unsuccessful RPC responses. Typed
-Files methods translate the codes below into subclasses, retaining `error_code`,
+Files RPC methods translate the codes below into subclasses, retaining `error_code`,
 `payload`, and the original exception as their cause. Generic `call()` remains
 raw, and the Files mapping does not apply to Webhooks or outer Tasks API errors.
-File-operation task result errors use the Files mapping.
+File-operation task result errors use the Files mapping. `download()` is excluded:
+it streams response bytes without interpreting them as RPC error envelopes.
 
 ## Evidence
 
@@ -43,13 +44,42 @@ All class names below have the `Synology` prefix and `Error` suffix.
 | 1078 | err_transforming_homes | Busy |
 
 `DirectoryNotFound` inherits `NotFound`; `QuotaExceeded` inherits `StorageFull`.
-`get_file()` returns `None` only for 1003. In particular, a missing required
-folder is not silently treated as an absent child.
+`get_file()` raises `SynologyNotFoundError` for 1003, consistent with other
+file operations. Codes 1005/1008 map to `SynologyDirectoryNotFoundError`; this
+does not guarantee which code the server sends for every missing directory.
+Catch `SynologyNotFoundError` to cover both missing nodes and directories.
 
 Existing contextual upload/create/rename conflict exceptions remain
 `SynologyUploadConflictError` (also a `SynologyConflictError`). The existing
-name-too-long and permanent-upload hierarchy is preserved. Semantic categories
-do not promise that a retry will succeed: even Busy needs a caller's retry policy.
+create/rename/upload name-too-long behavior uses `SynologyUploadNameTooLongError`,
+which inherits the neutral `SynologyNameTooLongError` and
+`SynologyPermanentUploadError`. Other operations use the neutral exception.
+Recognized upload failures inherit `SynologyUploadError` and their semantic
+exception, retaining the destination `file_name`. Upload codes 1032–1035 also
+inherit `SynologyPermanentUploadError` with `retryable = False`. Other semantic
+categories do not promise that a retry will succeed: even Busy needs a caller's
+retry policy.
+
+## Transport and response failures
+
+Connection, timeout, TLS, and HTTP status failures raise `SynologyNetworkError`.
+Its `original_error` retains the underlying transport exception, including after
+the client adds upload context. Errors from the upload source iterator propagate
+unchanged, even if the HTTP library wraps them while sending.
+
+Rejected logins raise `SynologyAuthenticationError` (a `SynologyApiError`) with
+`error_code` and the RPC envelope in `payload`. Connectivity failures during login
+raise `SynologyNetworkError` instead.
+
+Invalid JSON, malformed RPC envelopes, missing session tokens, non-object
+`get_file()` data, and malformed task results raise `SynologyProtocolError`.
+Upload protocol failures are also `SynologyUploadError`. Generic `call()` allows
+successful responses without data, since some RPC methods return no value.
+
+For server-reported RPC errors, `payload` is the full response envelope. For
+file-operation task errors it is the task data object, including all reported
+errors; the first error selects the raised exception. For protocol errors it
+contains the invalid decoded data, or the response text when JSON decoding fails.
 
 ## Deliberately uninterpreted cases
 
@@ -61,7 +91,7 @@ when a supported operation needs them and their meaning is established.
 
 In particular, the permission panel displays both 1003 and 1036 as `NON_EXIST`,
 but the message table calls 1036 `protection_shared_error`. UI presentation alone
-must not turn this protection error into `get_file() == None`.
+must not turn this protection error into `SynologyNotFoundError`.
 
 Downloads retain streaming transport behavior. JSON file contents must not be
 mistaken for API errors; error-body handling needs separate protocol evidence.

@@ -2,19 +2,18 @@ import asyncio
 import unicodedata
 from collections.abc import AsyncGenerator, AsyncIterable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Any
+from typing import Any, cast
 
 from aiohttp import ClientResponse
 
-from ._errors import file_error
+from ._errors import file_error, response_field, response_object, upload_error
 from ._transport import SynologyTransport, create_transport
 from .exceptions import (
     SynologyApiError,
-    SynologyNameTooLongError,
     SynologyNetworkError,
-    SynologyNotFoundError,
+    SynologyProtocolError,
     SynologyUploadConflictError,
-    SynologyUploadError,
+    SynologyUploadNameTooLongError,
 )
 from .types import (
     JsonValue,
@@ -24,7 +23,6 @@ from .types import (
     SynologyLookupRef,
     SynologyNodeRef,
     SynologyParentRef,
-    SynologyTaskInfo,
     SynologyWebhookCreateResponse,
     SynologyWebhookInfo,
     SynologyWebhookListResponse,
@@ -59,7 +57,7 @@ class SynologyClient:
 
     async def _request(self, api: str, version: int, method: str, **params: Any) -> Any:
         try:
-            return await self._transport.request(api, version, method, **params)
+            data = await self._transport.request(api, version, method, **params)
         except SynologyApiError as exc:
             if api != FILES_API:
                 raise
@@ -67,19 +65,20 @@ class SynologyClient:
             if mapped is exc:
                 raise
             raise mapped from exc
+        if api == WEBHOOKS_API and method == "delete":
+            return data
+        return response_object(data, f"{api}.{method} returned no object")
 
-    async def get_file(self, path: SynologyLookupRef) -> SynologyFileInfo | None:
-        try:
-            return await self._request(
-                FILES_API,
-                FILES_VERSION,
-                "get",
-                path=to_path_parameter_value(path),
-            )
-        except SynologyNotFoundError as exc:
-            if exc.error_code == 1003:
-                return None
-            raise
+    async def get_file(self, path: SynologyLookupRef) -> SynologyFileInfo:
+        data = await self._request(
+            FILES_API,
+            FILES_VERSION,
+            "get",
+            path=to_path_parameter_value(path),
+        )
+        return cast(
+            SynologyFileInfo, response_object(data, "Files.get returned no file object")
+        )
 
     async def list_folder(
         self,
@@ -100,7 +99,7 @@ class SynologyClient:
             offset=offset,
             limit=limit,
         )
-        return data["items"], data["total"]
+        return response_field(data, "items", list), response_field(data, "total", int)
 
     async def create_folder(
         self,
@@ -126,7 +125,7 @@ class SynologyClient:
                     payload=exc.payload,
                 ) from (exc.__cause__ or exc)
             if exc.error_code == 1035:
-                raise SynologyNameTooLongError(
+                raise SynologyUploadNameTooLongError(
                     f"File name is too long for Synology Drive: {name!r}",
                     file_name=name,
                     error_code=exc.error_code,
@@ -158,7 +157,7 @@ class SynologyClient:
                     payload=exc.payload,
                 ) from (exc.__cause__ or exc)
             if exc.error_code == 1035:
-                raise SynologyNameTooLongError(
+                raise SynologyUploadNameTooLongError(
                     f"File name is too long for Synology Drive: {new_name!r}",
                     file_name=new_name,
                     error_code=exc.error_code,
@@ -180,7 +179,7 @@ class SynologyClient:
             to_parent_folder=to_parent_parameter_value(new_parent_path),
             conflict_action="stop",
         )
-        await self.wait_task(data["async_task_id"])
+        await self.wait_task(response_field(data, "async_task_id", str))
 
     async def delete(self, node_id: SynologyNodeRef) -> None:
         data: SynologyAsyncTaskResponse = await self._request(
@@ -189,21 +188,39 @@ class SynologyClient:
             "delete",
             files=[to_file_identifier_value(node_id)],
         )
-        await self.wait_task(data["async_task_id"])
+        await self.wait_task(response_field(data, "async_task_id", str))
 
     async def wait_task(self, task_id: str) -> None:
+        """Wait for a Files operation; payloads on failure contain task data."""
         for delay in TASK_POLL_DELAYS:
             await asyncio.sleep(delay)
-            data: SynologyTaskInfo = await self._request(
-                TASKS_API,
-                TASKS_VERSION,
-                "get",
-                task_id=task_id,
+            data = response_object(
+                await self._request(
+                    TASKS_API,
+                    TASKS_VERSION,
+                    "get",
+                    task_id=task_id,
+                ),
+                "Invalid task response",
             )
+            if not isinstance(data.get("status"), str):
+                raise SynologyProtocolError("Invalid task response", payload=data)
             if data["status"] != "finished":
                 continue
             result = data.get("result")
-            errors = result["errors"] if result else []
+            if result is None:
+                errors = []
+            else:
+                result = response_object(result, "Invalid task result")
+                if not isinstance(result.get("errors"), list):
+                    raise SynologyProtocolError("Invalid task result", payload=data)
+                errors = cast(list[Any], result["errors"])
+            for entry in errors:
+                error = response_object(entry, "Invalid task error")
+                if type(error.get("code")) is not int or (
+                    "message" in error and not isinstance(error["message"], str)
+                ):
+                    raise SynologyProtocolError("Invalid task errors", payload=data)
             if errors:
                 code = errors[0]["code"]
                 message = errors[0].get("message", "task failed")
@@ -238,34 +255,13 @@ class SynologyClient:
                 file_data=data,
                 mime_type=mime_type or "application/octet-stream",
             )
+            response_object(result, "Files.upload returned no file object")
         except SynologyApiError as exc:
-            if exc.error_code == 1022:
-                raise SynologyUploadConflictError(
-                    f"Upload conflict for {name!r}",
-                    file_name=name,
-                    error_code=exc.error_code,
-                    payload=exc.payload,
-                ) from (exc.__cause__ or exc)
-            if exc.error_code == 1035:
-                raise SynologyNameTooLongError(
-                    f"File name is too long for Synology Drive: {name!r}",
-                    file_name=name,
-                    error_code=exc.error_code,
-                    payload=exc.payload,
-                ) from exc
-            mapped = file_error(exc)
-            if mapped is not exc:
-                raise mapped from exc
-            raise SynologyUploadError(
-                f"Upload failed for {name!r}: {exc}",
-                file_name=name,
-                error_code=exc.error_code,
-                payload=exc.payload,
-            ) from exc
+            raise upload_error(exc, name) from exc
         except SynologyNetworkError as exc:
             raise SynologyNetworkError(
                 f"Upload failed for {name!r}: {exc}",
-                original_error=exc,
+                original_error=exc.original_error or exc,
             ) from exc
         return result
 
@@ -288,7 +284,7 @@ class SynologyClient:
             "list",
             app_id=app_id,
         )
-        return data["items"]
+        return response_field(data, "items", list)
 
     async def create_webhook(self, *, url: str, app_id: str) -> str:
         data: SynologyWebhookCreateResponse = await self._request(
@@ -299,7 +295,7 @@ class SynologyClient:
             url=url,
             app_id=app_id,
         )
-        return data["webhook_id"]
+        return response_field(data, "webhook_id", str)
 
     async def delete_webhook(self, *, webhook_id: str, app_id: str) -> None:
         await self._request(
