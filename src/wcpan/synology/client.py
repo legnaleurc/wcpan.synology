@@ -2,14 +2,17 @@ import asyncio
 import unicodedata
 from collections.abc import AsyncGenerator, AsyncIterable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import Any
 
 from aiohttp import ClientResponse
 
+from ._errors import file_error
 from ._transport import SynologyTransport, create_transport
-from .errors import (
+from .exceptions import (
     SynologyApiError,
     SynologyNameTooLongError,
     SynologyNetworkError,
+    SynologyNotFoundError,
     SynologyUploadConflictError,
     SynologyUploadError,
 )
@@ -54,13 +57,29 @@ class SynologyClient:
     ) -> JsonValue:
         return await self._transport.request(api, version, method, **params)
 
+    async def _request(self, api: str, version: int, method: str, **params: Any) -> Any:
+        try:
+            return await self._transport.request(api, version, method, **params)
+        except SynologyApiError as exc:
+            if api != FILES_API:
+                raise
+            mapped = file_error(exc)
+            if mapped is exc:
+                raise
+            raise mapped from exc
+
     async def get_file(self, path: SynologyLookupRef) -> SynologyFileInfo | None:
-        return await self._transport.request(
-            FILES_API,
-            FILES_VERSION,
-            "get",
-            path=to_path_parameter_value(path),
-        )
+        try:
+            return await self._request(
+                FILES_API,
+                FILES_VERSION,
+                "get",
+                path=to_path_parameter_value(path),
+            )
+        except SynologyNotFoundError as exc:
+            if exc.error_code == 1003:
+                return None
+            raise
 
     async def list_folder(
         self,
@@ -71,7 +90,7 @@ class SynologyClient:
         sort_by: str = "name",
         sort_direction: str = "asc",
     ) -> tuple[list[SynologyFileInfo], int]:
-        data: SynologyFileListResponse = await self._transport.request(
+        data: SynologyFileListResponse = await self._request(
             FILES_API,
             FILES_VERSION,
             "list",
@@ -90,7 +109,7 @@ class SynologyClient:
     ) -> SynologyFileInfo:
         name = unicodedata.normalize("NFC", name)
         try:
-            data: SynologyFileInfo = await self._transport.request(
+            data: SynologyFileInfo = await self._request(
                 FILES_API,
                 FILES_VERSION,
                 "create",
@@ -103,12 +122,16 @@ class SynologyClient:
                 raise SynologyUploadConflictError(
                     f"Folder {name!r} already exists",
                     file_name=name,
-                ) from exc
+                    error_code=exc.error_code,
+                    payload=exc.payload,
+                ) from (exc.__cause__ or exc)
             if exc.error_code == 1035:
                 raise SynologyNameTooLongError(
                     f"File name is too long for Synology Drive: {name!r}",
                     file_name=name,
-                ) from exc
+                    error_code=exc.error_code,
+                    payload=exc.payload,
+                ) from (exc.__cause__ or exc)
             raise
         return data
 
@@ -119,7 +142,7 @@ class SynologyClient:
     ) -> SynologyFileInfo:
         new_name = unicodedata.normalize("NFC", new_name)
         try:
-            data: SynologyFileInfo = await self._transport.request(
+            data: SynologyFileInfo = await self._request(
                 FILES_API,
                 FILES_VERSION,
                 "update",
@@ -131,7 +154,16 @@ class SynologyClient:
                 raise SynologyUploadConflictError(
                     f"Rename conflict for {new_name!r}",
                     file_name=new_name,
-                ) from exc
+                    error_code=exc.error_code,
+                    payload=exc.payload,
+                ) from (exc.__cause__ or exc)
+            if exc.error_code == 1035:
+                raise SynologyNameTooLongError(
+                    f"File name is too long for Synology Drive: {new_name!r}",
+                    file_name=new_name,
+                    error_code=exc.error_code,
+                    payload=exc.payload,
+                ) from (exc.__cause__ or exc)
             raise
         return data
 
@@ -140,7 +172,7 @@ class SynologyClient:
         node_id: SynologyNodeRef,
         new_parent_path: SynologyParentRef,
     ) -> None:
-        data: SynologyAsyncTaskResponse = await self._transport.request(
+        data: SynologyAsyncTaskResponse = await self._request(
             FILES_API,
             FILES_VERSION,
             "move",
@@ -151,7 +183,7 @@ class SynologyClient:
         await self.wait_task(data["async_task_id"])
 
     async def delete(self, node_id: SynologyNodeRef) -> None:
-        data: SynologyAsyncTaskResponse = await self._transport.request(
+        data: SynologyAsyncTaskResponse = await self._request(
             FILES_API,
             FILES_VERSION,
             "delete",
@@ -162,7 +194,7 @@ class SynologyClient:
     async def wait_task(self, task_id: str) -> None:
         for delay in TASK_POLL_DELAYS:
             await asyncio.sleep(delay)
-            data: SynologyTaskInfo = await self._transport.request(
+            data: SynologyTaskInfo = await self._request(
                 TASKS_API,
                 TASKS_VERSION,
                 "get",
@@ -175,7 +207,11 @@ class SynologyClient:
             if errors:
                 code = errors[0]["code"]
                 message = errors[0].get("message", "task failed")
-                raise SynologyApiError(message, error_code=code, payload=data)
+                raw = SynologyApiError(message, error_code=code, payload=data)
+                mapped = file_error(raw)
+                if mapped is raw:
+                    raise raw
+                raise mapped from raw
             return
         raise SynologyApiError(f"Task {task_id!r} did not finish in time")
 
@@ -207,15 +243,24 @@ class SynologyClient:
                 raise SynologyUploadConflictError(
                     f"Upload conflict for {name!r}",
                     file_name=name,
-                ) from exc
+                    error_code=exc.error_code,
+                    payload=exc.payload,
+                ) from (exc.__cause__ or exc)
             if exc.error_code == 1035:
                 raise SynologyNameTooLongError(
                     f"File name is too long for Synology Drive: {name!r}",
                     file_name=name,
+                    error_code=exc.error_code,
+                    payload=exc.payload,
                 ) from exc
+            mapped = file_error(exc)
+            if mapped is not exc:
+                raise mapped from exc
             raise SynologyUploadError(
                 f"Upload failed for {name!r}: {exc}",
                 file_name=name,
+                error_code=exc.error_code,
+                payload=exc.payload,
             ) from exc
         except SynologyNetworkError as exc:
             raise SynologyNetworkError(
@@ -237,7 +282,7 @@ class SynologyClient:
         )
 
     async def list_webhooks(self, *, app_id: str) -> list[SynologyWebhookInfo]:
-        data: SynologyWebhookListResponse = await self._transport.request(
+        data: SynologyWebhookListResponse = await self._request(
             WEBHOOKS_API,
             WEBHOOKS_VERSION,
             "list",
@@ -246,7 +291,7 @@ class SynologyClient:
         return data["items"]
 
     async def create_webhook(self, *, url: str, app_id: str) -> str:
-        data: SynologyWebhookCreateResponse = await self._transport.request(
+        data: SynologyWebhookCreateResponse = await self._request(
             WEBHOOKS_API,
             WEBHOOKS_VERSION,
             "create",
@@ -257,7 +302,7 @@ class SynologyClient:
         return data["webhook_id"]
 
     async def delete_webhook(self, *, webhook_id: str, app_id: str) -> None:
-        await self._transport.request(
+        await self._request(
             WEBHOOKS_API,
             WEBHOOKS_VERSION,
             "delete",

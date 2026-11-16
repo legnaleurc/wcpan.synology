@@ -1,0 +1,106 @@
+class SynologyError(Exception):
+    pass
+
+
+class SynologyAuthenticationError(SynologyError):
+    pass
+
+
+class SynologyApiError(SynologyError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: int | None = None,
+        payload: object | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.payload = payload
+
+
+class SynologyNotFoundError(SynologyApiError):
+    """The requested Drive node does not exist."""
+
+
+class SynologyPermissionError(SynologyApiError):
+    """Drive denied access to the requested operation."""
+
+
+class SynologyConflictError(SynologyApiError):
+    """The destination name is already taken."""
+
+
+class SynologyDirectoryNotFoundError(SynologyNotFoundError):
+    """A required directory does not exist."""
+
+
+class SynologyInvalidOperationError(SynologyApiError):
+    """The requested source and destination combination is invalid."""
+
+
+class SynologyUnsupportedError(SynologyApiError):
+    """Drive does not support this operation."""
+
+
+class SynologyStorageFullError(SynologyApiError):
+    """Drive has insufficient storage space."""
+
+
+class SynologyQuotaExceededError(SynologyStorageFullError):
+    """The volume or shared-folder quota is exhausted."""
+
+
+class SynologyBusyError(SynologyApiError):
+    """Drive is performing maintenance or moving data."""
+
+
+class SynologyInvalidNameError(SynologyApiError):
+    """The destination uses a reserved name."""
+
+
+class SynologyFileTooLargeError(SynologyApiError):
+    """The file exceeds the permitted size."""
+
+
+class SynologyPathTooLongError(SynologyApiError):
+    """The destination path is too long."""
+
+
+class SynologyLockedError(SynologyApiError):
+    """The node is locked."""
+
+
+class SynologyNetworkError(SynologyError):
+    def __init__(self, message: str, original_error: Exception | None = None) -> None:
+        super().__init__(message)
+        self.original_error = original_error
+
+
+class SynologyUploadError(SynologyApiError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        file_name: str | None = None,
+        error_code: int | None = None,
+        payload: object | None = None,
+    ) -> None:
+        super().__init__(message, error_code=error_code, payload=payload)
+        self.file_name = file_name
+
+
+class SynologyPermanentUploadError(SynologyUploadError):
+    """An upload failure that cannot succeed by retrying unchanged."""
+
+    retryable = False
+
+
+class SynologyNameTooLongError(SynologyPermanentUploadError):
+    """Synology rejected the destination name as too long."""
+
+    reason = "name_too_long"
+
+
+class SynologyUploadConflictError(SynologyUploadError, SynologyConflictError):
+    pass

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from wcpan.synology import SynologyNameTooLongError, SynologyPermanentUploadError
 from wcpan.synology.client import SynologyClient
-from wcpan.synology.errors import (
+from wcpan.synology.exceptions import (
     SynologyApiError,
     SynologyNetworkError,
     SynologyUploadConflictError,
@@ -310,7 +310,7 @@ class TestCompatibility(IsolatedAsyncioTestCase):
                 with self.assertRaises(SynologyUploadConflictError):
                     await getattr(client, operation)(SynologyFileId("node"), "name")
 
-    async def test_rename_keeps_generic_name_too_long_error(self) -> None:
+    async def test_rename_reports_name_too_long_error(self) -> None:
         error = SynologyApiError("name too long", error_code=1035)
         transport = MagicMock()
         transport.request = AsyncMock(side_effect=error)
@@ -318,4 +318,5 @@ class TestCompatibility(IsolatedAsyncioTestCase):
             await SynologyClient(transport=transport).rename(
                 SynologyFileId("node"), "long"
             )
-        self.assertIs(caught.exception, error)
+        self.assertIsInstance(caught.exception, SynologyNameTooLongError)
+        self.assertIs(caught.exception.__cause__, error)

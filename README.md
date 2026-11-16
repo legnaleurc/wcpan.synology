@@ -104,12 +104,49 @@ Uploads use the normalized name for both the destination path and multipart
 filename. Scalar multipart fields intentionally omit `Content-Type`; only the
 file part includes it, matching behavior verified against Synology servers.
 
+Errors from typed Files methods use Synology-specific exceptions, not Python's
+local filesystem exceptions. They inherit `SynologyApiError` and retain
+`error_code`, the original response in `payload`, and the underlying error as
+`__cause__` when translated:
+
+| Drive Files codes | Exception / behavior |
+| --- | --- |
+| 1002, 1068, 1070 | `SynologyPermissionError` |
+| 1003 | `SynologyNotFoundError`; `get_file()` returns `None` |
+| 1005, 1008 | `SynologyDirectoryNotFoundError` (also `SynologyNotFoundError`) |
+| 1009, 1010, 1024, 1025 | `SynologyInvalidOperationError` |
+| 1011 | `SynologyUnsupportedError` |
+| 1014, 1015 | `SynologyStorageFullError` |
+| 1016, 1017 | `SynologyQuotaExceededError` (also `SynologyStorageFullError`) |
+| 1018–1021, 1047, 1078 | `SynologyBusyError` |
+| 1022 | `SynologyConflictError` |
+| 1032 | `SynologyInvalidNameError` |
+| 1033 | `SynologyFileTooLargeError` |
+| 1034 | `SynologyPathTooLongError` |
+| 1035 | `SynologyNameTooLongError` |
+| 1069 | `SynologyLockedError` |
+
+See [the error model](docs/error-model.md) for the evidence, scope, inheritance,
+and deliberately uninterpreted cases. Missing required directories still raise;
+`get_file()` treats only code 1003 as an absent result.
+
+These meanings are derived from the Drive web UI's `Utils.initErrorStr()` and
+navigation error handlers (TI97 bundles), and the missing-file behavior was
+observed against Files v11. They are scoped to the Files API, not assumed for
+Webhooks or other API families. Completed file-operation task failures use the
+same mapping. Unknown errors remain `SynologyApiError`; generic `call()` always
+preserves raw API errors. Downloads retain their streaming transport behavior;
+they do not interpret file contents as API errors.
+
 Upload connection failures raise `SynologyNetworkError`, preserving the original
-error for callers that implement retries. API code `1022` raises
-`SynologyUploadConflictError`. Code `1035` raises `SynologyNameTooLongError` for
-uploads and folder creation; it inherits `SynologyPermanentUploadError`, with
-`retryable = False` and `reason = "name_too_long"`. Other upload API failures raise
-`SynologyUploadError`. These exceptions are available from `wcpan.synology`.
+error for retry decisions. Folder creation, rename, and upload retain the
+existing `SynologyUploadConflictError` for code 1022; it is also a
+`SynologyConflictError`. Name-too-long errors retain
+`SynologyPermanentUploadError`, `retryable = False`, `reason = "name_too_long"`,
+and the destination `file_name`, including for rename. Other recognized upload
+errors use the semantic exceptions above; unknown upload errors remain
+`SynologyUploadError`, which now also inherits `SynologyApiError` and preserves
+the code and payload. All exceptions are available from `wcpan.synology`.
 
 ## Development
 

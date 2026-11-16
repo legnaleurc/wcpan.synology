@@ -6,7 +6,7 @@ from typing import Any
 
 from aiohttp import ClientResponse, ClientSession
 
-from .errors import (
+from .exceptions import (
     SynologyApiError,
     SynologyAuthenticationError,
     SynologyNetworkError,
