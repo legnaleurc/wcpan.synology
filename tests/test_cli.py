@@ -1,14 +1,99 @@
 from argparse import Namespace
+from contextlib import asynccontextmanager
 from io import StringIO
-from unittest import TestCase
-from unittest.mock import patch
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import MagicMock, patch
 
+from wcpan.synology import SynologyClient
 from wcpan.synology.cli import (
     apply_env_fallbacks,
     build_parser,
+    create_files_download_params,
+    dispatch_command,
     parse_params,
     print_help_topic,
 )
+
+
+class TestDownloadCommand(IsolatedAsyncioTestCase):
+    def test_force_download_preserves_explicit_params(self):
+        for options, expected in (
+            ([], {}),
+            (["--param", "force_download=true"], {"force_download": True}),
+            (["--param", "force_download=false"], {"force_download": False}),
+            (["--force-download"], {"force_download": True}),
+            (
+                ["--param", "force_download=false", "--force-download"],
+                {"force_download": True},
+            ),
+        ):
+            with self.subTest(options=options):
+                args = build_parser().parse_args(
+                    ["files", "download", "--files", '["id:1"]', *options]
+                )
+                self.assertEqual(
+                    create_files_download_params(args), {"files": ["id:1"], **expected}
+                )
+
+    async def test_streams_binary_and_json_contents_as_metadata(self):
+        for body in (b"\xff\x00binary", b'{"success":false,"error":{"code":1003}}'):
+            with self.subTest(body=body):
+                response = MagicMock()
+                response.status = 200
+                response.headers = {"Content-Type": "application/octet-stream"}
+                consumed = []
+                closed = []
+
+                async def chunks(size):
+                    consumed.append(size)
+                    yield body[:2]
+                    yield body[2:]
+
+                response.content.iter_chunked.side_effect = chunks
+
+                @asynccontextmanager
+                async def stream(*args, **kwargs):
+                    try:
+                        yield response
+                    finally:
+                        closed.append(True)
+
+                transport = MagicMock()
+                transport.download.side_effect = stream
+                client = SynologyClient(transport=transport)
+                args = build_parser().parse_args(
+                    [
+                        "files",
+                        "download",
+                        "--files",
+                        '["id:1","id:2"]',
+                        "--force-download",
+                        "--param",
+                        "offset=0",
+                    ]
+                )
+                result = await dispatch_command(client, args)
+                self.assertEqual(
+                    result,
+                    {
+                        "status": 200,
+                        "headers": dict(response.headers),
+                        "size": len(body),
+                    },
+                )
+                transport.download.assert_called_once_with(
+                    "SYNO.SynologyDrive.Files",
+                    11,
+                    "download",
+                    extra_headers=None,
+                    files=["id:1", "id:2"],
+                    force_download=True,
+                    offset=0,
+                )
+                transport.request.assert_not_called()
+                response.json.assert_not_called()
+                self.assertEqual(consumed, [65536])
+                self.assertEqual(closed, [True])
 
 
 class TestEnvFallbacks(TestCase):

@@ -8,6 +8,7 @@ from typing import Any
 from aiohttp import ClientError, ClientResponse, ClientSession
 
 from ._errors import response_object
+from ._upload import UploadSource
 from .exceptions import (
     SynologyApiError,
     SynologyAuthenticationError,
@@ -29,7 +30,8 @@ async def read_rpc_response(
         payload = await response.json(content_type=None)
     except ValueError as exc:
         raise SynologyProtocolError(
-            f"{operation} returned invalid JSON", payload=await response.text()
+            f"{operation} returned invalid JSON",
+            payload=await response.text(errors="replace"),
         ) from exc
     payload = response_object(payload, f"{operation} returned an invalid envelope")
     if type(payload.get("success")) is not bool:
@@ -188,40 +190,32 @@ class SynologyTransport:
             "method": method,
             "_sid": self._sid,
         }
-        source_error: Exception | None = None
-
-        async def source() -> AsyncIterator[bytes]:
-            nonlocal source_error
+        async with UploadSource(file_data) as source:
+            content_type, body = build_multipart_body(
+                form_fields=form_fields,
+                file_name=file_name,
+                file_data=source,
+                file_content_type=mime_type,
+            )
+            result: Any = None
             try:
-                async for chunk in file_data:
-                    yield chunk
+                async with self._session.post(
+                    f"{self._base_url}/webapi/entry.cgi",
+                    params=query,
+                    headers={"Content-Type": content_type},
+                    data=body,
+                ) as response:
+                    response.raise_for_status()
+                    result = await read_rpc_response(response, f"{api}.{method}")
             except Exception as exc:
-                source_error = exc
-                raise
-
-        content_type, body = build_multipart_body(
-            form_fields=form_fields,
-            file_name=file_name,
-            file_data=source(),
-            file_content_type=mime_type,
-        )
-        try:
-            async with self._session.post(
-                f"{self._base_url}/webapi/entry.cgi",
-                params=query,
-                headers={"Content-Type": content_type},
-                data=body,
-            ) as response:
-                response.raise_for_status()
-                return await read_rpc_response(response, f"{api}.{method}")
-        except Exception as exc:
-            if source_error is not None:
-                if source_error is exc:
+                if source.error is None:
+                    if isinstance(exc, (ClientError, asyncio.TimeoutError, OSError)):
+                        raise SynologyNetworkError(str(exc), exc) from exc
                     raise
-                raise source_error from None
-            if isinstance(exc, (ClientError, asyncio.TimeoutError, OSError)):
-                raise SynologyNetworkError(str(exc), exc) from exc
-            raise
+            # Re-raise outside the handler to retain an explicit source cause.
+            if source.error is not None:
+                raise source.error
+            return result
 
 
 def build_multipart_body(

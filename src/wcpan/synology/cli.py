@@ -224,6 +224,21 @@ async def run_api_command(client: Any, args: argparse.Namespace) -> Any:
     if method_spec.get("upload"):
         return await upload_file_command(client, args)
     params = method_spec["params"](args)
+    if method_spec.get("download"):
+        async with client.stream_call(
+            api=namespace_spec["api"],
+            version=namespace_spec["version"],
+            method=args.api_method,
+            **params,
+        ) as response:
+            size = 0
+            async for chunk in response.content.iter_chunked(65536):
+                size += len(chunk)
+            return {
+                "status": response.status,
+                "headers": dict(response.headers),
+                "size": size,
+            }
     return await client.call(
         api=namespace_spec["api"],
         version=namespace_spec["version"],
@@ -330,7 +345,8 @@ def create_files_delete_params(args: argparse.Namespace) -> dict[str, Any]:
 def create_files_download_params(args: argparse.Namespace) -> dict[str, Any]:
     params = parse_params(args.param)
     params["files"] = parse_json_value(args.files)
-    params["force_download"] = args.force_download
+    if args.force_download:
+        params["force_download"] = True
     return params
 
 
@@ -518,7 +534,8 @@ API_CATALOG = {
                 "example": "wcpan-synology files delete --files '[\"id:1\"]'",
             },
             "download": {
-                "summary": "Download files via generic RPC and print response metadata",
+                "summary": "Stream files and print status, headers, and byte count",
+                "download": True,
                 "args": [
                     {
                         "flags": ["--files"],

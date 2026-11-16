@@ -62,10 +62,22 @@ retry policy.
 
 ## Transport and response failures
 
-Connection, timeout, TLS, and HTTP status failures raise `SynologyNetworkError`.
+Connection, timeout, TLS, and HTTP status failures during RPC requests and
+download setup raise `SynologyNetworkError`. After a download yields its raw
+response, body-read failures retain their aiohttp or Python exception types;
+exceptions from the consumer's code are not reclassified.
 Its `original_error` retains the underlying transport exception, including after
-the client adds upload context. Errors from the upload source iterator propagate
-unchanged, even if the HTTP library wraps them while sending.
+the client adds upload context. Errors from the upload source iterator retain
+their identity and explicit `__cause__`, even if the HTTP library wraps them
+while sending. Re-raising can change their traceback and implicit `__context__`,
+as with normal Python exception propagation.
+Upload closes the iterator obtained from the source when it supports `aclose()`,
+including on errors, cancellation, and early server replies. Reads and closing
+are serialized so cleanup does not close an iterator while a read is running.
+If closing also fails during an existing failure or cancellation, the original
+exception remains primary and receives a note describing the cleanup failure.
+If there is no existing failure, a close error is raised; the server may already
+have accepted the upload, so that exception alone does not mean a retry is safe.
 
 Rejected logins raise `SynologyAuthenticationError` (a `SynologyApiError`) with
 `error_code` and the RPC envelope in `payload`. Connectivity failures during login
@@ -80,6 +92,8 @@ For server-reported RPC errors, `payload` is the full response envelope. For
 file-operation task errors it is the task data object, including all reported
 errors; the first error selects the raised exception. For protocol errors it
 contains the invalid decoded data, or the response text when JSON decoding fails.
+Undecodable bytes in that diagnostic text are replaced with the Unicode
+replacement character. Malformed task results retain the complete task data.
 
 ## Deliberately uninterpreted cases
 
@@ -95,3 +109,5 @@ must not turn this protection error into `SynologyNotFoundError`.
 
 Downloads retain streaming transport behavior. JSON file contents must not be
 mistaken for API errors; error-body handling needs separate protocol evidence.
+Raw `stream_call()` and CLI downloads use this same path. The CLI consumes the
+stream and reports HTTP status, headers, and received byte count as metadata.

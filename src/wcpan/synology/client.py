@@ -8,6 +8,7 @@ from aiohttp import ClientResponse
 
 from ._errors import file_error, response_field, response_object, upload_error
 from ._transport import SynologyTransport, create_transport
+from ._upload import UploadSource
 from .exceptions import (
     SynologyApiError,
     SynologyNetworkError,
@@ -54,6 +55,20 @@ class SynologyClient:
         **params: JsonValue,
     ) -> JsonValue:
         return await self._transport.request(api, version, method, **params)
+
+    def stream_call(
+        self,
+        *,
+        api: str,
+        version: int,
+        method: str,
+        extra_headers: dict[str, str] | None = None,
+        **params: JsonValue,
+    ) -> AbstractAsyncContextManager[ClientResponse]:
+        """Stream a raw RPC response without interpreting its contents."""
+        return self._transport.download(
+            api, version, method, extra_headers=extra_headers, **params
+        )
 
     async def _request(self, api: str, version: int, method: str, **params: Any) -> Any:
         try:
@@ -211,12 +226,12 @@ class SynologyClient:
             if result is None:
                 errors = []
             else:
-                result = response_object(result, "Invalid task result")
+                result = response_object(result, "Invalid task result", payload=data)
                 if not isinstance(result.get("errors"), list):
                     raise SynologyProtocolError("Invalid task result", payload=data)
                 errors = cast(list[Any], result["errors"])
             for entry in errors:
-                error = response_object(entry, "Invalid task error")
+                error = response_object(entry, "Invalid task error", payload=data)
                 if type(error.get("code")) is not int or (
                     "message" in error and not isinstance(error["message"], str)
                 ):
@@ -241,29 +256,36 @@ class SynologyClient:
         mime_type: str | None = None,
     ) -> SynologyFileInfo:
         name = unicodedata.normalize("NFC", name)
-        try:
-            result: SynologyFileInfo = await self._transport.upload(
-                FILES_API,
-                FILES_VERSION,
-                "upload",
-                form_fields={
-                    "path": f"{to_parent_parameter_value(parent_path)}/{name}",
-                    "type": "file",
-                    "conflict_action": "stop",
-                },
-                file_name=name,
-                file_data=data,
-                mime_type=mime_type or "application/octet-stream",
-            )
-            response_object(result, "Files.upload returned no file object")
-        except SynologyApiError as exc:
-            raise upload_error(exc, name) from exc
-        except SynologyNetworkError as exc:
-            raise SynologyNetworkError(
-                f"Upload failed for {name!r}: {exc}",
-                original_error=exc.original_error or exc,
-            ) from exc
-        return result
+        async with UploadSource(data) as source:
+            try:
+                result: SynologyFileInfo = await self._transport.upload(
+                    FILES_API,
+                    FILES_VERSION,
+                    "upload",
+                    form_fields={
+                        "path": f"{to_parent_parameter_value(parent_path)}/{name}",
+                        "type": "file",
+                        "conflict_action": "stop",
+                    },
+                    file_name=name,
+                    file_data=source,
+                    mime_type=mime_type or "application/octet-stream",
+                )
+                response_object(result, "Files.upload returned no file object")
+            except SynologyApiError as exc:
+                if exc is source.error:
+                    raise
+                raise upload_error(exc, name) from exc
+            except SynologyNetworkError as exc:
+                if exc is source.error:
+                    raise
+                raise SynologyNetworkError(
+                    f"Upload failed for {name!r}: {exc}",
+                    original_error=exc.original_error or exc,
+                ) from exc
+            if source.error is not None:
+                raise source.error
+            return result
 
     def download(
         self,

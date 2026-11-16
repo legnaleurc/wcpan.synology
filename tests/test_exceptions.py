@@ -262,6 +262,7 @@ class TestFileErrors(IsolatedAsyncioTestCase):
             None,
             {},
             {"status": "finished", "result": {}},
+            {"status": "finished", "result": []},
             {"status": "finished", "result": {"errors": [{}]}},
             {"status": "finished", "result": {"errors": [None]}},
             {"status": "finished", "result": {"errors": [{"code": "1003"}]}},
@@ -271,5 +272,6 @@ class TestFileErrors(IsolatedAsyncioTestCase):
                 with patch(
                     "wcpan.synology.client.asyncio.sleep", new_callable=AsyncMock
                 ):
-                    with self.assertRaises(SynologyProtocolError):
+                    with self.assertRaises(SynologyProtocolError) as caught:
                         await self.client.wait_task("task")
+                    self.assertIs(caught.exception.payload, data)

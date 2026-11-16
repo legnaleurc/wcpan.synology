@@ -138,7 +138,13 @@ Webhooks or other API families. Completed file-operation task failures use the
 same mapping. Unknown errors remain `SynologyApiError`; generic `call()` always
 preserves raw API errors. `download()` is excluded from the semantic mapping:
 it retains streaming transport behavior and does not interpret file contents
-as API errors. HTTP download errors raise `SynologyNetworkError`.
+as API errors. Download request and HTTP status failures raise
+`SynologyNetworkError`; failures while reading the raw response body retain
+their aiohttp or Python exception types.
+`stream_call()` provides the same streaming behavior for raw RPC parameters.
+The CLI `files download` command consumes the stream and prints JSON containing
+the HTTP `status`, `headers`, and received byte count (`size`). It does not save
+the file contents or parse them as JSON.
 
 Upload connection failures raise `SynologyNetworkError`, preserving the original
 error for retry decisions. Folder creation, rename, and upload retain the
@@ -151,7 +157,12 @@ The contextual name-too-long class is `SynologyUploadNameTooLongError`, also a
 `SynologyNameTooLongError`, with `reason = "name_too_long"`; create/rename retain
 this contextual behavior. Other Files operations use the neutral
 `SynologyNameTooLongError`. Unknown upload codes raise `SynologyUploadError`.
-Exceptions from the upload data iterator propagate unchanged.
+Exceptions from the upload data iterator retain their identity and explicit
+cause; their traceback and implicit exception context may change on re-raising.
+Upload owns the iterator it obtains from the source and calls its `aclose()`
+when available, including on cancellation and early server replies.
+Cleanup failures preserve an existing error or cancellation and are attached
+as exception notes. Otherwise the cleanup error is raised.
 
 Login transport failures raise `SynologyNetworkError`; rejected logins raise
 `SynologyAuthenticationError`, retaining the server code and payload.

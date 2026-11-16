@@ -39,9 +39,13 @@ from .exceptions import (
 )
 
 
-def response_object(value: object, message: str) -> dict[str, Any]:
+def response_object(
+    value: object, message: str, *, payload: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise SynologyProtocolError(message, payload=value)
+        raise SynologyProtocolError(
+            message, payload=payload if payload is not None else value
+        )
     return cast(dict[str, Any], value)
 
 
