@@ -4,8 +4,7 @@ from io import StringIO
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import MagicMock, patch
 
-from wcpan.synology import SynologyClient
-from wcpan.synology.cli import (
+from wcpan.synology._cli import (
     apply_env_fallbacks,
     build_parser,
     create_files_download_params,
@@ -13,6 +12,7 @@ from wcpan.synology.cli import (
     parse_params,
     print_help_topic,
 )
+from wcpan.synology._client import DefaultSynologyClient
 
 
 class TestDownloadCommand(IsolatedAsyncioTestCase):
@@ -60,7 +60,7 @@ class TestDownloadCommand(IsolatedAsyncioTestCase):
 
                 transport = MagicMock()
                 transport.download.side_effect = stream
-                client = SynologyClient(transport=transport)
+                client = DefaultSynologyClient(transport=transport)
                 args = build_parser().parse_args(
                     [
                         "files",

@@ -1,7 +1,9 @@
 from unittest import IsolatedAsyncioTestCase
 
-from wcpan.synology import SynologyApiError
 from wcpan.synology._upload import UploadSource
+from wcpan.synology.exceptions import (
+    SynologyApiError,
+)
 
 
 class TestUploadCleanup(IsolatedAsyncioTestCase):

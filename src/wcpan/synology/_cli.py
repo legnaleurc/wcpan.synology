@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from .client import create_client
+from .lib import create_client
 
 
 GLOBAL_OPTION_ENV = {

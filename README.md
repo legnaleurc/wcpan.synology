@@ -54,11 +54,11 @@ uv run wcpan-synology \
 Python reference types:
 
 ```python
-from wcpan.synology import (
+from wcpan.synology.lib import create_client
+from wcpan.synology.types import (
     SynologyFileId,
     SynologyPath,
     SynologyPermanentLink,
-    create_client,
 )
 
 async with create_client(

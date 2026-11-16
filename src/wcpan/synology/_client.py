@@ -7,7 +7,12 @@ from typing import Any, cast
 from aiohttp import ClientResponse
 
 from ._errors import file_error, response_field, response_object, upload_error
-from ._transport import SynologyTransport, create_transport
+from ._transport import SynologyTransport
+from ._types import (
+    to_file_identifier_value,
+    to_parent_parameter_value,
+    to_path_parameter_value,
+)
 from ._upload import UploadSource
 from .exceptions import (
     SynologyApiError,
@@ -19,6 +24,7 @@ from .exceptions import (
 from .types import (
     JsonValue,
     SynologyAsyncTaskResponse,
+    SynologyClient,
     SynologyFileInfo,
     SynologyFileListResponse,
     SynologyLookupRef,
@@ -27,9 +33,6 @@ from .types import (
     SynologyWebhookCreateResponse,
     SynologyWebhookInfo,
     SynologyWebhookListResponse,
-    to_file_identifier_value,
-    to_parent_parameter_value,
-    to_path_parameter_value,
 )
 
 
@@ -42,7 +45,7 @@ WEBHOOKS_VERSION = 2
 TASK_POLL_DELAYS = [0.5, 1.0, 2.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0]
 
 
-class SynologyClient:
+class DefaultSynologyClient(SynologyClient):  # pyright: ignore[reportUnusedClass]
     def __init__(self, *, transport: SynologyTransport) -> None:
         self._transport = transport
 
@@ -350,20 +353,3 @@ async def _download(
         force_download=True,
     ) as response:
         yield response
-
-
-@asynccontextmanager
-async def create_client(
-    *,
-    base_url: str,
-    username: str,
-    password: str,
-    otp_code: str | None = None,
-) -> AsyncGenerator[SynologyClient]:
-    async with create_transport(
-        base_url=base_url,
-        username=username,
-        password=password,
-        otp_code=otp_code,
-    ) as transport:
-        yield SynologyClient(transport=transport)

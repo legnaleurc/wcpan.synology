@@ -1,20 +1,20 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from wcpan.synology import (
+from wcpan.synology._client import (
+    DefaultSynologyClient,
+)
+from wcpan.synology.exceptions import (
     SynologyApiError,
     SynologyBusyError,
-    SynologyClient,
     SynologyConflictError,
     SynologyDirectoryNotFoundError,
-    SynologyFileId,
     SynologyFileTooLargeError,
     SynologyInvalidNameError,
     SynologyInvalidOperationError,
     SynologyLockedError,
     SynologyNameTooLongError,
     SynologyNotFoundError,
-    SynologyPath,
     SynologyPathTooLongError,
     SynologyPermanentUploadError,
     SynologyPermissionError,
@@ -25,12 +25,16 @@ from wcpan.synology import (
     SynologyUploadConflictError,
     SynologyUploadError,
 )
+from wcpan.synology.types import (
+    SynologyFileId,
+    SynologyPath,
+)
 
 
 class TestFileErrors(IsolatedAsyncioTestCase):
     def setUp(self):
         self.transport = MagicMock()
-        self.client = SynologyClient(transport=self.transport)
+        self.client = DefaultSynologyClient(transport=self.transport)
 
     def fail_request(self, code):
         payload = {"success": False, "error": {"code": code}}
@@ -133,7 +137,7 @@ class TestFileErrors(IsolatedAsyncioTestCase):
         self.transport.request = AsyncMock(
             side_effect=[{"async_task_id": "task"}, payload]
         )
-        with patch("wcpan.synology.client.asyncio.sleep", new_callable=AsyncMock):
+        with patch("wcpan.synology._client.asyncio.sleep", new_callable=AsyncMock):
             with self.assertRaises(SynologyPermissionError) as caught:
                 await self.client.move(SynologyFileId("file"), SynologyPath("/target"))
         self.assertIs(caught.exception.payload, payload)
@@ -251,7 +255,7 @@ class TestFileErrors(IsolatedAsyncioTestCase):
         self.transport.request = AsyncMock(
             side_effect=[{"async_task_id": "task"}, payload]
         )
-        with patch("wcpan.synology.client.asyncio.sleep", new_callable=AsyncMock):
+        with patch("wcpan.synology._client.asyncio.sleep", new_callable=AsyncMock):
             with self.assertRaises(SynologyNotFoundError) as caught:
                 await self.client.delete(SynologyFileId("file"))
         self.assertIs(caught.exception.payload, payload)
@@ -270,7 +274,7 @@ class TestFileErrors(IsolatedAsyncioTestCase):
             with self.subTest(data=data):
                 self.transport.request = AsyncMock(return_value=data)
                 with patch(
-                    "wcpan.synology.client.asyncio.sleep", new_callable=AsyncMock
+                    "wcpan.synology._client.asyncio.sleep", new_callable=AsyncMock
                 ):
                     with self.assertRaises(SynologyProtocolError) as caught:
                         await self.client.wait_task("task")

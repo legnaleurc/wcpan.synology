@@ -20,7 +20,7 @@ classifiers = [
 ]
 
 [project.scripts]
-"wcpan-synology" = "wcpan.synology.cli:main"
+"wcpan-synology" = "wcpan.synology._cli:main"
 
 [dependency-groups]
 dev = [

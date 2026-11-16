@@ -5,20 +5,24 @@ from unittest.mock import AsyncMock, MagicMock
 from aiohttp import ClientConnectionError, ClientSession, ClientTimeout, web
 from aiohttp.test_utils import TestServer
 
-from wcpan.synology import (
-    SynologyApiError,
-    SynologyAuthenticationError,
-    SynologyClient,
-    SynologyConflictError,
-    SynologyNetworkError,
-    SynologyPath,
-    SynologyProtocolError,
+from wcpan.synology._client import (
+    DefaultSynologyClient,
 )
 from wcpan.synology._transport import (
     SynologyTransport,
     build_multipart_body,
     encode_rpc_value,
     login,
+)
+from wcpan.synology.exceptions import (
+    SynologyApiError,
+    SynologyAuthenticationError,
+    SynologyConflictError,
+    SynologyNetworkError,
+    SynologyProtocolError,
+)
+from wcpan.synology.types import (
+    SynologyPath,
 )
 
 
@@ -161,7 +165,7 @@ class TestRpcErrors(IsolatedAsyncioTestCase):
         self.assertIs(caught.exception.__cause__, cause)
 
     async def test_client_preserves_synology_source_errors(self):
-        client = SynologyClient(transport=self.transport)
+        client = DefaultSynologyClient(transport=self.transport)
         for error in (
             SynologyApiError("source missing", error_code=1003),
             SynologyNetworkError("source unavailable", OSError("connection reset")),
@@ -239,7 +243,7 @@ class TestUploadIntegration(IsolatedAsyncioTestCase):
         self.addAsyncCleanup(server.close)
         session = ClientSession(timeout=ClientTimeout(total=5))
         self.addAsyncCleanup(session.close)
-        return SynologyClient(
+        return DefaultSynologyClient(
             transport=SynologyTransport(
                 session=session,
                 base_url=str(server.make_url("")),

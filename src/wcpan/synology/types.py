@@ -1,5 +1,10 @@
+from abc import ABC, abstractmethod
+from collections.abc import AsyncIterable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import NotRequired, TypedDict
+
+from aiohttp import ClientResponse
 
 
 type JsonValue = (
@@ -106,25 +111,94 @@ class SynologyAsyncTaskResponse(TypedDict):
     async_task_id: str
 
 
-def to_path_parameter_value(value: SynologyLookupRef) -> str:
-    if isinstance(value, SynologyPath):
-        return value.path
-    if isinstance(value, SynologyFileId):
-        return f"id:{value.file_id}"
-    if isinstance(value, SynologyChildRef):
-        return f"{to_parent_parameter_value(value.parent_ref)}/{value.name}"
-    return f"link:{value.permanent_link}"
+class SynologyClient(ABC):
+    """Async interface to Synology Drive operations."""
 
+    @abstractmethod
+    async def call(
+        self,
+        *,
+        api: str,
+        version: int,
+        method: str,
+        **params: JsonValue,
+    ) -> JsonValue: ...
 
-def to_file_identifier_value(value: SynologyNodeRef) -> str:
-    if isinstance(value, SynologyFileId):
-        return f"id:{value.file_id}"
-    return f"link:{value.permanent_link}"
+    @abstractmethod
+    def stream_call(
+        self,
+        *,
+        api: str,
+        version: int,
+        method: str,
+        extra_headers: dict[str, str] | None = None,
+        **params: JsonValue,
+    ) -> AbstractAsyncContextManager[ClientResponse]: ...
 
+    @abstractmethod
+    async def get_file(self, path: SynologyLookupRef) -> SynologyFileInfo: ...
 
-def to_parent_parameter_value(value: SynologyParentRef) -> str:
-    if isinstance(value, SynologyPath):
-        return value.path
-    # Child-addressing with `id:<id>/<name>` is already documented and
-    # validated, so normalize file-id parents to that form when composing.
-    return f"id:{value.file_id}"
+    @abstractmethod
+    async def list_folder(
+        self,
+        path: SynologyLookupRef,
+        *,
+        offset: int = 0,
+        limit: int = 1000,
+        sort_by: str = "name",
+        sort_direction: str = "asc",
+    ) -> tuple[list[SynologyFileInfo], int]: ...
+
+    @abstractmethod
+    async def create_folder(
+        self,
+        parent_path: SynologyParentRef,
+        name: str,
+    ) -> SynologyFileInfo: ...
+
+    @abstractmethod
+    async def rename(
+        self,
+        path: SynologyLookupRef,
+        new_name: str,
+    ) -> SynologyFileInfo: ...
+
+    @abstractmethod
+    async def move(
+        self,
+        node_id: SynologyNodeRef,
+        new_parent_path: SynologyParentRef,
+    ) -> None: ...
+
+    @abstractmethod
+    async def delete(self, node_id: SynologyNodeRef) -> None: ...
+
+    @abstractmethod
+    async def wait_task(self, task_id: str) -> None: ...
+
+    @abstractmethod
+    async def upload(
+        self,
+        parent_path: SynologyParentRef,
+        name: str,
+        data: AsyncIterable[bytes],
+        *,
+        mime_type: str | None = None,
+    ) -> SynologyFileInfo: ...
+
+    @abstractmethod
+    def download(
+        self,
+        node_id: SynologyNodeRef,
+        *,
+        range_: slice | None = None,
+    ) -> AbstractAsyncContextManager[ClientResponse]: ...
+
+    @abstractmethod
+    async def list_webhooks(self, *, app_id: str) -> list[SynologyWebhookInfo]: ...
+
+    @abstractmethod
+    async def create_webhook(self, *, url: str, app_id: str) -> str: ...
+
+    @abstractmethod
+    async def delete_webhook(self, *, webhook_id: str, app_id: str) -> None: ...
