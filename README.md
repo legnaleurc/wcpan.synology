@@ -33,6 +33,12 @@ uv run wcpan-synology files list --help
 Login options (`--base-url`, `--username`, `--password`, and `--otp-code`) can
 appear before the command or after subcommands.
 
+Omitted login options fall back to `WCPAN_SYNOLOGY_BASE_URL`,
+`WCPAN_SYNOLOGY_USERNAME`, `WCPAN_SYNOLOGY_PASSWORD`, and
+`WCPAN_SYNOLOGY_OTP_CODE`, respectively. Explicit command-line values take
+precedence over environment variables. Network commands still require a base
+URL, username, and password; the OTP code is optional.
+
 Namespaced API call:
 
 ```bash

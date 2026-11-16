@@ -4,10 +4,58 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from wcpan.synology.cli import (
+    apply_env_fallbacks,
     build_parser,
     parse_params,
     print_help_topic,
 )
+
+
+class TestEnvFallbacks(TestCase):
+    def test_missing_options_use_environment(self) -> None:
+        args = build_parser().parse_args(["tasks", "list"])
+        apply_env_fallbacks(
+            args,
+            environ={
+                "WCPAN_SYNOLOGY_BASE_URL": "https://nas.example:5001",
+                "WCPAN_SYNOLOGY_USERNAME": "user",
+                "WCPAN_SYNOLOGY_PASSWORD": "secret",
+                "WCPAN_SYNOLOGY_OTP_CODE": "123456",
+            },
+        )
+        self.assertEqual("https://nas.example:5001", args.base_url)
+        self.assertEqual("user", args.username)
+        self.assertEqual("secret", args.password)
+        self.assertEqual("123456", args.otp_code)
+
+    def test_explicit_options_win_at_each_level(self) -> None:
+        for command in (
+            ["--username=explicit", "tasks", "list"],
+            ["tasks", "--username=explicit", "list"],
+            ["tasks", "list", "--username=explicit"],
+            ["tasks", "list", "--username="],
+        ):
+            with self.subTest(command=command):
+                args = build_parser().parse_args(command)
+                expected = args.username
+                apply_env_fallbacks(
+                    args, environ={"WCPAN_SYNOLOGY_USERNAME": "fallback"}
+                )
+                self.assertEqual(expected, args.username)
+
+    def test_unset_environment_leaves_options_missing(self) -> None:
+        args = build_parser().parse_args(["tasks", "list"])
+        apply_env_fallbacks(args, environ={})
+        self.assertIsNone(args.base_url)
+        self.assertIsNone(args.username)
+        self.assertIsNone(args.password)
+        self.assertIsNone(args.otp_code)
+
+    def test_defaults_to_process_environment(self) -> None:
+        args = Namespace()
+        with patch.dict("os.environ", {"WCPAN_SYNOLOGY_USERNAME": "user"}, clear=True):
+            apply_env_fallbacks(args)
+        self.assertEqual("user", args.username)
 
 
 class TestParseParams(TestCase):

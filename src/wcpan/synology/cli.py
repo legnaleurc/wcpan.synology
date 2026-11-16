@@ -3,11 +3,34 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from .client import create_client
+
+
+GLOBAL_OPTION_ENV = {
+    "base_url": "WCPAN_SYNOLOGY_BASE_URL",
+    "username": "WCPAN_SYNOLOGY_USERNAME",
+    "password": "WCPAN_SYNOLOGY_PASSWORD",
+    "otp_code": "WCPAN_SYNOLOGY_OTP_CODE",
+}
+
+
+def apply_env_fallbacks(
+    args: argparse.Namespace,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> None:
+    """Fill missing global options without overriding explicit CLI values."""
+    if environ is None:
+        environ = os.environ
+    for name, env_name in GLOBAL_OPTION_ENV.items():
+        if getattr(args, name, None) is None:
+            setattr(args, name, environ.get(env_name))
 
 
 def main() -> None:
@@ -51,13 +74,17 @@ def build_auth_parent_parser(
         add_help=False,
         argument_default=argparse.SUPPRESS if suppress_defaults else None,
     )
-    parser.add_argument(
-        "--base-url",
-        help="DSM base URL such as https://nas.example:5001",
-    )
-    parser.add_argument("--username", help="DSM username")
-    parser.add_argument("--password", help="DSM password")
-    parser.add_argument("--otp-code", help="Optional 2FA code")
+    descriptions = {
+        "base_url": "DSM base URL such as https://nas.example:5001",
+        "username": "DSM username",
+        "password": "DSM password",
+        "otp_code": "Optional 2FA code",
+    }
+    for name, env_name in GLOBAL_OPTION_ENV.items():
+        parser.add_argument(
+            f"--{name.replace('_', '-')}",
+            help=f"{descriptions[name]} (env: {env_name})",
+        )
     return parser
 
 
@@ -162,6 +189,7 @@ async def run_client_command(args: argparse.Namespace) -> None:
     if args.command == "help":
         raise SystemExit(f"unsupported async command: {args.command}")
 
+    apply_env_fallbacks(args)
     required = ("base_url", "username", "password")
     missing = [name for name in required if not getattr(args, name)]
     if missing:
