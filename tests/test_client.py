@@ -128,6 +128,18 @@ class TestTaskPolling(IsolatedAsyncioTestCase):
             [call(0.5), call(1.0), call(2.0)] + [call(4.0)] * 7,
         )
 
+    async def test_wait_task_accepts_null_errors(self) -> None:
+        # A successful delete task, as observed live.
+        transport = MagicMock()
+        transport.request = AsyncMock(
+            return_value={
+                "status": "finished",
+                "progress": 100,
+                "result": {"action": "delete", "errors": None, "names": ["x"]},
+            }
+        )
+        await DefaultSynologyClient(transport=transport).wait_task("task-id")
+
     async def test_wait_task_raises_on_reported_error(self) -> None:
         transport = MagicMock()
         transport.request = AsyncMock(

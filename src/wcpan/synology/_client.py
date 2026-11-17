@@ -230,9 +230,15 @@ class DefaultSynologyClient(SynologyClient):  # pyright: ignore[reportUnusedClas
                 errors = []
             else:
                 result = response_object(result, "Invalid task result", payload=data)
-                if not isinstance(result.get("errors"), list):
+                if "errors" not in result:
                     raise SynologyProtocolError("Invalid task result", payload=data)
-                errors = cast(list[Any], result["errors"])
+                # A finished delete reports success as `null`, others as `[]`.
+                reported: object = result["errors"]
+                if reported is None:
+                    reported = []
+                if not isinstance(reported, list):
+                    raise SynologyProtocolError("Invalid task result", payload=data)
+                errors = cast(list[Any], reported)
             for entry in errors:
                 error = response_object(entry, "Invalid task error", payload=data)
                 if type(error.get("code")) is not int or (

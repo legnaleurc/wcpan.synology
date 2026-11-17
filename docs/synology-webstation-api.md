@@ -957,6 +957,30 @@ Success response:
 }
 ```
 
+Delete success response. A finished delete can report no errors as `null`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "task_id": "task-<n>",
+    "status": "finished",
+    "progress": 100,
+    "result": {
+      "action": "delete",
+      "errors": null,
+      "names": ["sample"],
+      "params": {
+        "files": [{"path": "id:<file-id>"}],
+        "permanent": 0
+      },
+      "processed_size": 1,
+      "total_size": 1
+    }
+  }
+}
+```
+
 Observed invalid task response:
 
 ```json
@@ -1000,10 +1024,27 @@ Observed move-conflict response:
 }
 ```
 
-Practical rule:
+Task completion semantics:
 
-- for async file operations, task status is authoritative
-- do not treat the initial `async_task_id` response as final success
+- The initial `async_task_id` response only confirms that the operation started.
+  Poll the task until `status` is `finished`.
+- A successful API response does not guarantee that the file operation succeeded:
+  a nonempty `result.errors` array reports task failures, including partial
+  failures.
+- Both `result.errors: null` and `result.errors: []` mean no reported task errors.
+  This applies to the shared task handler for delete and move operations; `null`
+  alone does not indicate completion.
+- Completion does not require `progress == 100` or equal `processed_size` and
+  `total_size` values.
+- A successful task can include `result.skips`. Skipped items are reported
+  separately from errors, so success does not guarantee that every item was
+  processed.
+
+The Python client's `wait_task()` accepts both null and empty error lists. When
+`result` is an object, it requires an `errors` key whose value is null or an
+array; missing or malformed values raise `SynologyProtocolError`. A missing or
+null `result` is accepted for a finished task. `wait_task()` returns no result
+data, so it does not expose skipped items.
 
 ## `SYNO.SynologyDrive.Webhooks`
 

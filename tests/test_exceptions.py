@@ -267,6 +267,8 @@ class TestFileErrors(IsolatedAsyncioTestCase):
             {},
             {"status": "finished", "result": {}},
             {"status": "finished", "result": []},
+            {"status": "finished", "result": {"errors": {}}},
+            {"status": "finished", "result": {"errors": "none"}},
             {"status": "finished", "result": {"errors": [{}]}},
             {"status": "finished", "result": {"errors": [None]}},
             {"status": "finished", "result": {"errors": [{"code": "1003"}]}},
