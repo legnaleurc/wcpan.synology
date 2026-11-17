@@ -2,7 +2,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from wcpan.synology._client import (
-    DefaultSynologyClient,
+    _DefaultSynologyClient,
 )
 from wcpan.synology.exceptions import (
     SynologyApiError,
@@ -34,7 +34,7 @@ from wcpan.synology.types import (
 class TestFileErrors(IsolatedAsyncioTestCase):
     def setUp(self):
         self.transport = MagicMock()
-        self.client = DefaultSynologyClient(transport=self.transport)
+        self.client = _DefaultSynologyClient(transport=self.transport)
 
     def fail_request(self, code):
         payload = {"success": False, "error": {"code": code}}

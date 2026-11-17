@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
-from wcpan.synology._client import DefaultSynologyClient
+from wcpan.synology._client import _DefaultSynologyClient
 from wcpan.synology.exceptions import (
     SynologyApiError,
     SynologyNameTooLongError,
@@ -39,7 +39,7 @@ class TestClientUpload(IsolatedAsyncioTestCase):
     async def test_upload_success(self) -> None:
         transport = MagicMock()
         transport.upload = AsyncMock(return_value=make_file_info("id", "file.bin"))
-        client = DefaultSynologyClient(transport=transport)
+        client = _DefaultSynologyClient(transport=transport)
 
         async def chunks():
             yield b"data"
@@ -53,7 +53,7 @@ class TestClientUpload(IsolatedAsyncioTestCase):
         transport.upload = AsyncMock(
             side_effect=SynologyApiError("conflict", error_code=1022)
         )
-        client = DefaultSynologyClient(transport=transport)
+        client = _DefaultSynologyClient(transport=transport)
 
         async def chunks():
             yield b"data"
@@ -66,7 +66,7 @@ class TestClientUpload(IsolatedAsyncioTestCase):
         transport.upload = AsyncMock(
             side_effect=SynologyApiError("bad", error_code=108)
         )
-        client = DefaultSynologyClient(transport=transport)
+        client = _DefaultSynologyClient(transport=transport)
 
         async def chunks():
             yield b"data"
@@ -78,7 +78,7 @@ class TestClientUpload(IsolatedAsyncioTestCase):
         transport = MagicMock()
         error = SynologyNetworkError("reset", ConnectionResetError("reset"))
         transport.upload = AsyncMock(side_effect=error)
-        client = DefaultSynologyClient(transport=transport)
+        client = _DefaultSynologyClient(transport=transport)
 
         async def chunks():
             yield b"data"
@@ -92,7 +92,7 @@ class TestClientUpload(IsolatedAsyncioTestCase):
     async def test_upload_parent_file_id_is_normalized_for_child_path(self) -> None:
         transport = MagicMock()
         transport.upload = AsyncMock(return_value=make_file_info("id", "file.bin"))
-        client = DefaultSynologyClient(transport=transport)
+        client = _DefaultSynologyClient(transport=transport)
 
         async def chunks():
             yield b"data"
@@ -114,14 +114,14 @@ class TestTaskPolling(IsolatedAsyncioTestCase):
         transport.request = AsyncMock(
             side_effect=[{"status": "running"}] * 6 + [{"status": "finished"}]
         )
-        await DefaultSynologyClient(transport=transport).wait_task("task-id")
+        await _DefaultSynologyClient(transport=transport).wait_task("task-id")
         self.assertEqual(transport.request.await_count, 7)
 
     async def test_task_exhausts_ten_polls(self) -> None:
         transport = MagicMock()
         transport.request = AsyncMock(return_value={"status": "running"})
         with self.assertRaisesRegex(SynologyApiError, "did not finish in time"):
-            await DefaultSynologyClient(transport=transport).wait_task("task-id")
+            await _DefaultSynologyClient(transport=transport).wait_task("task-id")
         self.assertEqual(transport.request.await_count, 10)
         self.assertEqual(
             self.sleep.await_args_list,
@@ -138,7 +138,7 @@ class TestTaskPolling(IsolatedAsyncioTestCase):
                 "result": {"action": "delete", "errors": None, "names": ["x"]},
             }
         )
-        await DefaultSynologyClient(transport=transport).wait_task("task-id")
+        await _DefaultSynologyClient(transport=transport).wait_task("task-id")
 
     async def test_wait_task_raises_on_reported_error(self) -> None:
         transport = MagicMock()
@@ -148,7 +148,7 @@ class TestTaskPolling(IsolatedAsyncioTestCase):
                 "result": {"errors": [{"code": 1022, "message": "conflict"}]},
             }
         )
-        client = DefaultSynologyClient(transport=transport)
+        client = _DefaultSynologyClient(transport=transport)
 
         with self.assertRaises(SynologyApiError):
             await client.wait_task("task-id")
@@ -160,7 +160,7 @@ class TestPathParameters(IsolatedAsyncioTestCase):
         info = make_file_info("id", "file.bin")
         transport.request = AsyncMock(return_value=info)
 
-        result = await DefaultSynologyClient(transport=transport).get_file(
+        result = await _DefaultSynologyClient(transport=transport).get_file(
             SynologyFileId("id")
         )
 
@@ -172,7 +172,7 @@ class TestPathParameters(IsolatedAsyncioTestCase):
         transport.request = AsyncMock(side_effect=error)
 
         with self.assertRaises(SynologyApiError) as caught:
-            await DefaultSynologyClient(transport=transport).get_file(
+            await _DefaultSynologyClient(transport=transport).get_file(
                 SynologyFileId("inaccessible")
             )
 
@@ -181,7 +181,7 @@ class TestPathParameters(IsolatedAsyncioTestCase):
     async def test_get_file_accepts_child_ref(self) -> None:
         transport = MagicMock()
         transport.request = AsyncMock(return_value=make_file_info("id", "file.bin"))
-        client = DefaultSynologyClient(transport=transport)
+        client = _DefaultSynologyClient(transport=transport)
 
         await client.get_file(SynologyChildRef(SynologyFileId("parent-id"), "file.bin"))
 
@@ -192,7 +192,7 @@ class TestPathParameters(IsolatedAsyncioTestCase):
         transport = MagicMock()
         transport.request = AsyncMock(return_value={"items": [], "total": 0})
 
-        await DefaultSynologyClient(transport=transport).list_folder(
+        await _DefaultSynologyClient(transport=transport).list_folder(
             SynologyFileId("folder"),
             sort_by="modified_time",
             sort_direction="desc",
@@ -205,7 +205,7 @@ class TestPathParameters(IsolatedAsyncioTestCase):
     async def test_get_file_accepts_file_id(self) -> None:
         transport = MagicMock()
         transport.request = AsyncMock(return_value=make_file_info("id", "file.bin"))
-        client = DefaultSynologyClient(transport=transport)
+        client = _DefaultSynologyClient(transport=transport)
 
         await client.get_file(SynologyFileId("node-id"))
 
@@ -215,7 +215,7 @@ class TestPathParameters(IsolatedAsyncioTestCase):
     async def test_get_file_accepts_permanent_link(self) -> None:
         transport = MagicMock()
         transport.request = AsyncMock(return_value=make_file_info("id", "file.bin"))
-        client = DefaultSynologyClient(transport=transport)
+        client = _DefaultSynologyClient(transport=transport)
 
         await client.get_file(SynologyPermanentLink("perm://node"))
 
@@ -225,7 +225,7 @@ class TestPathParameters(IsolatedAsyncioTestCase):
     async def test_rename_accepts_synology_path(self) -> None:
         transport = MagicMock()
         transport.request = AsyncMock(return_value=make_file_info("id", "renamed.bin"))
-        client = DefaultSynologyClient(transport=transport)
+        client = _DefaultSynologyClient(transport=transport)
 
         await client.rename(SynologyPath("/mydrive/file.bin"), "renamed.bin")
 
@@ -235,7 +235,7 @@ class TestPathParameters(IsolatedAsyncioTestCase):
     async def test_move_uses_distinct_node_and_parent_serialization(self) -> None:
         transport = MagicMock()
         transport.request = AsyncMock(return_value={"async_task_id": "task-id"})
-        client = DefaultSynologyClient(transport=transport)
+        client = _DefaultSynologyClient(transport=transport)
         client.wait_task = AsyncMock(return_value=None)
 
         await client.move(
@@ -250,7 +250,7 @@ class TestPathParameters(IsolatedAsyncioTestCase):
     async def test_delete_uses_canonical_file_id_format(self) -> None:
         transport = MagicMock()
         transport.request = AsyncMock(return_value={"async_task_id": "task-id"})
-        client = DefaultSynologyClient(transport=transport)
+        client = _DefaultSynologyClient(transport=transport)
         client.wait_task = AsyncMock(return_value=None)
 
         await client.delete(SynologyFileId("node-id"))
@@ -268,7 +268,7 @@ class TestCompatibility(IsolatedAsyncioTestCase):
                 transport = MagicMock()
                 transport.request = AsyncMock(return_value={})
                 transport.upload = AsyncMock(return_value={})
-                client = DefaultSynologyClient(transport=transport)
+                client = _DefaultSynologyClient(transport=transport)
                 if operation == "upload":
 
                     async def chunks():
@@ -299,7 +299,7 @@ class TestCompatibility(IsolatedAsyncioTestCase):
                 transport = MagicMock()
                 transport.request = AsyncMock(side_effect=error)
                 transport.upload = AsyncMock(side_effect=error)
-                client = DefaultSynologyClient(transport=transport)
+                client = _DefaultSynologyClient(transport=transport)
                 with self.assertRaises(SynologyNameTooLongError) as caught:
                     if operation == "upload":
 
@@ -323,7 +323,7 @@ class TestCompatibility(IsolatedAsyncioTestCase):
                 transport.request = AsyncMock(
                     side_effect=SynologyApiError("conflict", error_code=1022)
                 )
-                client = DefaultSynologyClient(transport=transport)
+                client = _DefaultSynologyClient(transport=transport)
                 with self.assertRaises(SynologyUploadConflictError):
                     await getattr(client, operation)(SynologyFileId("node"), "name")
 
@@ -332,7 +332,7 @@ class TestCompatibility(IsolatedAsyncioTestCase):
         transport = MagicMock()
         transport.request = AsyncMock(side_effect=error)
         with self.assertRaises(SynologyApiError) as caught:
-            await DefaultSynologyClient(transport=transport).rename(
+            await _DefaultSynologyClient(transport=transport).rename(
                 SynologyFileId("node"), "long"
             )
         self.assertIsInstance(caught.exception, SynologyNameTooLongError)
@@ -366,7 +366,7 @@ class TestClientFactory(IsolatedAsyncioTestCase):
                 otp_code="123456",
             ) as client:
                 self.assertIsInstance(client, SynologyClient)
-                self.assertIsInstance(client, DefaultSynologyClient)
+                self.assertIsInstance(client, _DefaultSynologyClient)
                 self.assertEqual(
                     await client.call(api="test", version=1, method="get"), {"ok": True}
                 )

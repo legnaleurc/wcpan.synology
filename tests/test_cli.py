@@ -12,7 +12,7 @@ from wcpan.synology._cli import (
     parse_params,
     print_help_topic,
 )
-from wcpan.synology._client import DefaultSynologyClient
+from wcpan.synology._client import _DefaultSynologyClient
 
 
 class TestDownloadCommand(IsolatedAsyncioTestCase):
@@ -60,7 +60,7 @@ class TestDownloadCommand(IsolatedAsyncioTestCase):
 
                 transport = MagicMock()
                 transport.download.side_effect = stream
-                client = DefaultSynologyClient(transport=transport)
+                client = _DefaultSynologyClient(transport=transport)
                 args = build_parser().parse_args(
                     [
                         "files",
