@@ -40,19 +40,17 @@ from .exceptions import (
 
 
 def response_object(
-    value: object, message: str, *, payload: Mapping[str, Any] | None = None
+    value: object, message: str, *, operation: str | None = None
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise SynologyProtocolError(
-            message, payload=payload if payload is not None else value
-        )
+        raise SynologyProtocolError(message, operation=operation)
     return cast(dict[str, Any], value)
 
 
 def response_field(data: Mapping[str, Any], key: str, expected: type) -> Any:
     value = data.get(key)
     if not isinstance(value, expected):
-        raise SynologyProtocolError(f"Invalid response field {key!r}", payload=data)
+        raise SynologyProtocolError(f"Invalid response field {key!r}")
     return value
 
 
@@ -91,7 +89,13 @@ def file_error(error: SynologyApiError) -> SynologyApiError:
     cls = classes.get(error.error_code) if error.error_code is not None else None
     if cls is None or isinstance(error, cls):
         return error
-    return cls(str(error), error_code=error.error_code, payload=error.payload)
+    return cls(
+        str(error),
+        error_code=error.error_code,
+        error=error.error,
+        operation=error.operation,
+        http_status=error.http_status,
+    )
 
 
 def upload_error(error: SynologyApiError, file_name: str) -> SynologyUploadError:
@@ -118,5 +122,7 @@ def upload_error(error: SynologyApiError, file_name: str) -> SynologyUploadError
         str(error),
         file_name=file_name,
         error_code=error.error_code,
-        payload=error.payload,
+        error=error.error,
+        operation=error.operation,
+        http_status=error.http_status,
     )

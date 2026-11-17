@@ -3,17 +3,21 @@ import json
 import secrets
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager, suppress
-from typing import Any
+from typing import Any, cast
 
-from aiohttp import ClientError, ClientResponse, ClientSession
+from aiohttp import ClientError, ClientResponse, ClientResponseError, ClientSession
 
+from ._diagnostics import log_invalid_response, log_response
 from ._errors import response_object
+from ._redact import redact
+from ._secret import Secret
 from ._upload import UploadSource
 from .exceptions import (
     SynologyApiError,
     SynologyAuthenticationError,
     SynologyNetworkError,
     SynologyProtocolError,
+    SynologyTransportError,
 )
 
 
@@ -21,34 +25,96 @@ def encode_rpc_value(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
 
+def network_error(exc: Exception, operation: str) -> SynologyNetworkError:
+    status = (exc.status or None) if isinstance(exc, ClientResponseError) else None
+    reason = f"HTTP {status}" if status is not None else type(exc).__name__
+    return SynologyNetworkError(
+        f"{operation} failed: {reason}",
+        SynologyTransportError(exc),
+        operation=operation,
+        http_status=status,
+    )
+
+
+async def check_http_status(response: ClientResponse, operation: str) -> None:
+    # Read an error body before raise_for_status() can release the connection.
+    parsed: Any = None
+    if response.status >= 400:
+        try:
+            parsed = await response.json(content_type=None)
+        except (ValueError, ClientError, OSError, asyncio.TimeoutError):
+            log_invalid_response(operation)
+        else:
+            log_response(operation, parsed)
+    failure = None
+    try:
+        response.raise_for_status()
+    except ClientResponseError as exc:
+        failure = network_error(exc, operation)
+        if isinstance(parsed, dict):
+            details = cast(dict[str, Any], parsed).get("error")
+            if isinstance(details, dict):
+                failure.error = redact(details)
+    if failure is not None:
+        raise failure from failure.original_error
+
+
 async def read_rpc_response(
     response: ClientResponse,
     operation: str,
     error_class: type[SynologyApiError] = SynologyApiError,
 ) -> Any:
+    await check_http_status(response, operation)
+    payload: Any = None
+    invalid_json = False
     try:
         payload = await response.json(content_type=None)
-    except ValueError as exc:
+    except ValueError:
+        invalid_json = True
+    # Raise outside the parser's handler: its exception may retain the full body.
+    if invalid_json:
+        log_invalid_response(operation)
         raise SynologyProtocolError(
             f"{operation} returned invalid JSON",
-            payload=await response.text(errors="replace"),
-        ) from exc
-    payload = response_object(payload, f"{operation} returned an invalid envelope")
+            operation=operation,
+            http_status=response.status,
+        )
+    log_response(operation, payload)
+    if not isinstance(payload, dict):
+        raise SynologyProtocolError(
+            f"{operation} returned an invalid envelope",
+            operation=operation,
+            http_status=response.status,
+        )
+    payload = cast(dict[str, Any], payload)
     if type(payload.get("success")) is not bool:
         raise SynologyProtocolError(
-            f"{operation} returned an invalid envelope", payload=payload
+            f"{operation} returned an invalid envelope",
+            operation=operation,
+            http_status=response.status,
         )
     if not payload["success"]:
-        error = response_object(
-            payload.get("error"), f"{operation} returned an invalid error"
-        )
+        error = payload.get("error")
+        if not isinstance(error, dict):
+            raise SynologyProtocolError(
+                f"{operation} returned an invalid error",
+                operation=operation,
+                http_status=response.status,
+            )
+        error = cast(dict[str, Any], error)
         if type(error.get("code")) is not int:
             raise SynologyProtocolError(
-                f"{operation} returned an invalid error", payload=payload
+                f"{operation} returned an invalid error",
+                operation=operation,
+                http_status=response.status,
             )
         code = error["code"]
         raise error_class(
-            f"{operation} failed with code {code}", error_code=code, payload=payload
+            f"{operation} failed with code {code}",
+            error_code=code,
+            error=error,
+            operation=operation,
+            http_status=response.status,
         )
     return payload.get("data")
 
@@ -58,45 +124,57 @@ async def login(
     *,
     base_url: str,
     username: str,
-    password: str,
-    otp_code: str | None = None,
-) -> str:
+    password: str | Secret,
+    otp_code: str | Secret | None = None,
+) -> Secret:
+    password_secret = password if isinstance(password, Secret) else Secret(password)
+    otp_secret = (
+        (otp_code if isinstance(otp_code, Secret) else Secret(otp_code))
+        if otp_code
+        else None
+    )
     params = {
         "api": "SYNO.API.Auth",
         "version": "3",
         "method": "login",
         "account": username,
-        "passwd": password,
+        "passwd": password_secret.reveal(),
         "session": "Drive",
         "format": "sid",
     }
     if otp_code:
-        params["otp_code"] = otp_code
+        params["otp_code"] = otp_secret.reveal() if otp_secret else ""
+    data: Any = None
     try:
         async with session.get(
             f"{base_url}/webapi/auth.cgi",
             params=params,
         ) as response:
-            response.raise_for_status()
             data = await read_rpc_response(
-                response, "Login", SynologyAuthenticationError
+                response, "SYNO.API.Auth.login", SynologyAuthenticationError
             )
     except (ClientError, asyncio.TimeoutError, OSError) as exc:
-        raise SynologyNetworkError(str(exc), exc) from exc
+        failure = network_error(exc, "SYNO.API.Auth.login")
+    else:
+        failure = None
+    if failure is not None:
+        raise failure from failure.original_error
     data = response_object(data, "Invalid login response")
     sid = data.get("sid")
     if not isinstance(sid, str) or not sid:
-        raise SynologyProtocolError("No session token in response", payload=data)
-    return sid
+        raise SynologyProtocolError(
+            "No session token in response", operation="SYNO.API.Auth.login"
+        )
+    return Secret(sid)
 
 
-async def logout(session: ClientSession, *, base_url: str, sid: str) -> None:
+async def logout(session: ClientSession, *, base_url: str, sid: Secret) -> None:
     params = {
         "api": "SYNO.API.Auth",
         "version": "3",
         "method": "logout",
         "session": "Drive",
-        "_sid": sid,
+        "_sid": sid.reveal(),
     }
     with suppress(Exception):
         async with session.get(f"{base_url}/webapi/auth.cgi", params=params):
@@ -109,11 +187,11 @@ class SynologyTransport:
         *,
         session: ClientSession,
         base_url: str,
-        sid: str,
+        sid: str | Secret,
     ) -> None:
         self._session = session
         self._base_url = base_url.rstrip("/")
-        self._sid = sid
+        self._sid = sid if isinstance(sid, Secret) else Secret(sid)
 
     async def request(
         self,
@@ -126,19 +204,20 @@ class SynologyTransport:
             "api": api,
             "version": str(version),
             "method": method,
-            "_sid": self._sid,
+            "_sid": self._sid.reveal(),
         }
         for key, value in params.items():
             query[key] = encode_rpc_value(value)
+        failure = None
         try:
             async with self._session.get(
                 f"{self._base_url}/webapi/entry.cgi",
                 params=query,
             ) as response:
-                response.raise_for_status()
                 return await read_rpc_response(response, f"{api}.{method}")
         except (ClientError, asyncio.TimeoutError, OSError) as exc:
-            raise SynologyNetworkError(str(exc), exc) from exc
+            failure = network_error(exc, f"{api}.{method}")
+        raise failure from failure.original_error
 
     @asynccontextmanager
     async def download(
@@ -154,24 +233,30 @@ class SynologyTransport:
             "api": api,
             "version": str(version),
             "method": method,
-            "_sid": self._sid,
+            "_sid": self._sid.reveal(),
         }
         for key, value in params.items():
             query[key] = encode_rpc_value(value)
+        response: ClientResponse | None = None
         try:
-            response = await self._session.get(
-                f"{self._base_url}/webapi/entry.cgi",
-                params=query,
-                headers=extra_headers or {},
-            )
-            response.raise_for_status()
-        except (ClientError, asyncio.TimeoutError, OSError) as exc:
-            raise SynologyNetworkError(str(exc), exc) from exc
-        try:
+            failure = None
+            try:
+                response = await self._session.get(
+                    f"{self._base_url}/webapi/entry.cgi",
+                    params=query,
+                    headers=extra_headers or {},
+                )
+                await check_http_status(response, f"{api}.{method}")
+            except (ClientError, asyncio.TimeoutError, OSError) as exc:
+                failure = network_error(exc, f"{api}.{method}")
+            if failure is not None:
+                raise failure from failure.original_error
+            assert response is not None
             yield response
         finally:
-            response.release()
-            await response.wait_for_close()
+            if response is not None:
+                response.release()
+                await response.wait_for_close()
 
     async def upload(
         self,
@@ -188,7 +273,7 @@ class SynologyTransport:
             "api": api,
             "version": str(version),
             "method": method,
-            "_sid": self._sid,
+            "_sid": self._sid.reveal(),
         }
         async with UploadSource(file_data) as source:
             content_type, body = build_multipart_body(
@@ -198,6 +283,7 @@ class SynologyTransport:
                 file_content_type=mime_type,
             )
             result: Any = None
+            failure = None
             try:
                 async with self._session.post(
                     f"{self._base_url}/webapi/entry.cgi",
@@ -205,16 +291,18 @@ class SynologyTransport:
                     headers={"Content-Type": content_type},
                     data=body,
                 ) as response:
-                    response.raise_for_status()
                     result = await read_rpc_response(response, f"{api}.{method}")
             except Exception as exc:
                 if source.error is None:
                     if isinstance(exc, (ClientError, asyncio.TimeoutError, OSError)):
-                        raise SynologyNetworkError(str(exc), exc) from exc
-                    raise
+                        failure = network_error(exc, f"{api}.{method}")
+                    else:
+                        raise
             # Re-raise outside the handler to retain an explicit source cause.
             if source.error is not None:
                 raise source.error
+            if failure is not None:
+                raise failure from failure.original_error
             return result
 
 
@@ -265,13 +353,15 @@ async def create_transport(
     password: str,
     otp_code: str | None = None,
 ) -> AsyncGenerator[SynologyTransport]:
+    password_secret = Secret(password)
+    otp_secret = Secret(otp_code) if otp_code else None
     async with ClientSession() as session:
         sid = await login(
             session,
             base_url=base_url.rstrip("/"),
             username=username,
-            password=password,
-            otp_code=otp_code,
+            password=password_secret,
+            otp_code=otp_secret,
         )
         try:
             yield SynologyTransport(

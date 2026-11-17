@@ -29,6 +29,7 @@ from wcpan.synology.types import (
 class TestRpcErrors(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.response = MagicMock()
+        self.response.status = 200
         self.response.json = AsyncMock()
         self.response.text = AsyncMock(return_value="<html>invalid</html>")
         self.session = MagicMock()
@@ -84,7 +85,9 @@ class TestRpcErrors(IsolatedAsyncioTestCase):
             with self.subTest(operation=operation):
                 with self.assertRaises(SynologyProtocolError) as caught:
                     await self.request(operation)
-                self.assertEqual(caught.exception.payload, "<html>invalid</html>")
+                self.assertIsNone(caught.exception.error)
+                self.assertIsNone(caught.exception.__context__)
+                self.assertFalse(hasattr(caught.exception, "payload"))
 
     async def test_invalid_utf8_is_protocol_error(self):
         body = b"proxy error: \xff"
@@ -98,36 +101,40 @@ class TestRpcErrors(IsolatedAsyncioTestCase):
             with self.subTest(operation=operation):
                 with self.assertRaises(SynologyProtocolError) as caught:
                     await self.request(operation)
-                self.assertEqual(caught.exception.payload, "proxy error: \ufffd")
+                self.assertIsNone(caught.exception.error)
+                self.assertIsNone(caught.exception.__context__)
 
-    async def test_login_rejection_keeps_code_and_payload(self):
+    async def test_login_rejection_keeps_code_and_error(self):
         payload = {"success": False, "error": {"code": 403}}
         self.response.json.return_value = payload
         with self.assertRaises(SynologyAuthenticationError) as caught:
             await self.request("login")
         self.assertEqual(caught.exception.error_code, 403)
-        self.assertIs(caught.exception.payload, payload)
+        self.assertEqual(caught.exception.error, payload["error"])
 
     async def test_login_connection_failure_is_network_error(self):
         error = ClientConnectionError("unreachable")
         self.session.get.return_value.__aenter__.side_effect = error
         with self.assertRaises(SynologyNetworkError) as caught:
             await self.request("login")
-        self.assertIs(caught.exception.original_error, error)
+        self.assertIsNot(caught.exception.original_error, error)
+        self.assertEqual(
+            caught.exception.original_error.error_type, "ClientConnectionError"
+        )
 
     async def test_login_missing_session_is_protocol_error(self):
         self.response.json.return_value = {"success": True, "data": {}}
         with self.assertRaises(SynologyProtocolError):
             await self.request("login")
 
-    async def test_api_rejection_keeps_envelope(self):
+    async def test_api_rejection_keeps_only_error_object(self):
         payload = {"success": False, "error": {"code": 1003}}
         self.response.json.return_value = payload
         for operation in ("request", "upload"):
             with self.assertRaises(SynologyApiError) as caught:
                 await self.request(operation)
             self.assertEqual(caught.exception.error_code, 1003)
-            self.assertIs(caught.exception.payload, payload)
+            self.assertEqual(caught.exception.error, payload["error"])
 
     async def test_upload_source_failure_survives_connection_wrapper(self):
         error = FileNotFoundError("missing source")
@@ -413,9 +420,7 @@ class TestUploadIntegration(IsolatedAsyncioTestCase):
             self.assertTrue(task.cancelled())
             self.assertTrue(closed.is_set())
             self.assertTrue(
-                any(
-                    "source close failed" in note for note in caught.exception.__notes__
-                )
+                any("RuntimeError" in note for note in caught.exception.__notes__)
             )
         finally:
             task.cancel()
@@ -456,8 +461,60 @@ class TestMultipartBody(IsolatedAsyncioTestCase):
 
 
 class TestDownload(IsolatedAsyncioTestCase):
+    async def test_cancellation_during_error_body_read_releases_response(self):
+        reading = asyncio.Event()
+        response = MagicMock()
+        response.status = 403
+        response.wait_for_close = AsyncMock()
+
+        async def read_body(**kwargs):
+            reading.set()
+            await asyncio.Event().wait()
+
+        response.json = AsyncMock(side_effect=read_body)
+        session = MagicMock()
+        session.get = AsyncMock(return_value=response)
+        transport = SynologyTransport(
+            session=session, base_url="https://nas.example", sid="sid"
+        )
+
+        async def download():
+            async with transport.download("api", 1, "get"):
+                self.fail("an HTTP failure must not yield a stream")
+
+        task = asyncio.create_task(download())
+        try:
+            await asyncio.wait_for(reading.wait(), 5)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            response.release.assert_called_once_with()
+            response.wait_for_close.assert_awaited_once_with()
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def test_unexpected_setup_error_releases_response(self):
+        error = RuntimeError("body reader failed")
+        response = MagicMock()
+        response.status = 403
+        response.json = AsyncMock(side_effect=error)
+        response.wait_for_close = AsyncMock()
+        session = MagicMock()
+        session.get = AsyncMock(return_value=response)
+        transport = SynologyTransport(
+            session=session, base_url="https://nas.example", sid="sid"
+        )
+        with self.assertRaises(RuntimeError) as caught:
+            async with transport.download("api", 1, "get"):
+                self.fail("setup failed")
+        self.assertIs(caught.exception, error)
+        response.release.assert_called_once_with()
+        response.wait_for_close.assert_awaited_once_with()
+
     async def test_consumer_error_is_not_wrapped_as_network_error(self) -> None:
         response = MagicMock()
+        response.status = 200
         response.wait_for_close = AsyncMock()
         session = MagicMock()
         session.get = AsyncMock(return_value=response)

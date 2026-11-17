@@ -27,7 +27,9 @@ class UploadSource(AsyncIterator[bytes]):
         except Exception as cleanup_error:
             if exc is None:
                 raise
-            exc.add_note(f"Upload source cleanup also failed: {cleanup_error!r}")
+            exc.add_note(
+                f"Upload source cleanup also failed: {type(cleanup_error).__name__}"
+            )
 
     async def __anext__(self) -> bytes:
         async with self._lock:

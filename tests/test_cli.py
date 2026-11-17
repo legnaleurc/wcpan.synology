@@ -280,3 +280,39 @@ class TestWebhookAppId(TestCase):
                     with self.assertRaises(SystemExit) as caught:
                         build_parser().parse_args(command + ["hook-id"])
                 self.assertEqual(2, caught.exception.code)
+
+
+class TestParserErrors(TestCase):
+    def test_errors_preserve_reasons_without_echoing_values(self):
+        cases = [
+            (
+                ["call"],
+                "the following arguments are required: --api, --version, --method",
+            ),
+            (["secret"], "argument command: invalid choice"),
+            (
+                ["call", "--api", "test", "--version", "secret", "--method", "get"],
+                "argument --version: invalid int value",
+            ),
+            (["tasks", "list", "--unknown", "secret"], "unrecognized arguments"),
+            (
+                ["tasks", "list", "--password"],
+                "argument --password: expected one argument",
+            ),
+            (
+                ["tasks", "list", "--help=secret"],
+                "argument -h/--help: unexpected value",
+            ),
+            (
+                ["webhooks", "get", "--app-id", "secret", "--webhook-id", "1"],
+                "id must be a string containing an integer",
+            ),
+        ]
+        for argv, reason in cases:
+            with self.subTest(argv=argv):
+                with patch("sys.stderr", new_callable=StringIO) as output:
+                    with self.assertRaises(SystemExit) as caught:
+                        build_parser().parse_args(argv)
+                self.assertEqual(caught.exception.code, 2)
+                self.assertIn(reason, output.getvalue())
+                self.assertNotIn("secret", output.getvalue())

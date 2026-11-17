@@ -39,7 +39,7 @@ class TestFileErrors(IsolatedAsyncioTestCase):
     def fail_request(self, code):
         payload = {"success": False, "error": {"code": code}}
         error = SynologyApiError(
-            "API rejected request", error_code=code, payload=payload
+            "API rejected request", error_code=code, error=payload["error"]
         )
         self.transport.request = AsyncMock(side_effect=error)
         return error
@@ -49,7 +49,7 @@ class TestFileErrors(IsolatedAsyncioTestCase):
         with self.assertRaises(SynologyNotFoundError) as caught:
             await self.client.get_file(SynologyFileId("absent"))
         self.assertEqual(caught.exception.error_code, 1003)
-        self.assertIs(caught.exception.payload, raw.payload)
+        self.assertEqual(caught.exception.error, raw.error)
         self.assertIs(caught.exception.__cause__, raw)
 
     async def test_files_errors_preserve_diagnostics(self):
@@ -88,7 +88,7 @@ class TestFileErrors(IsolatedAsyncioTestCase):
                     await self.client.list_folder(SynologyPath("/folder"))
                 self.assertIsInstance(caught.exception, SynologyApiError)
                 self.assertEqual(caught.exception.error_code, code)
-                self.assertIs(caught.exception.payload, raw.payload)
+                self.assertEqual(caught.exception.error, raw.error)
                 self.assertIs(caught.exception.__cause__, raw)
 
     async def test_missing_parent_is_not_a_missing_child(self):
@@ -140,14 +140,14 @@ class TestFileErrors(IsolatedAsyncioTestCase):
         with patch("wcpan.synology._client.asyncio.sleep", new_callable=AsyncMock):
             with self.assertRaises(SynologyPermissionError) as caught:
                 await self.client.move(SynologyFileId("file"), SynologyPath("/target"))
-        self.assertIs(caught.exception.payload, payload)
+        self.assertEqual(caught.exception.error, payload["result"]["errors"][0])
 
     async def test_rename_name_too_long_has_context(self):
         raw = self.fail_request(1035)
         with self.assertRaises(SynologyNameTooLongError) as caught:
             await self.client.rename(SynologyFileId("file"), "long-name")
         self.assertEqual(caught.exception.file_name, "long-name")
-        self.assertIs(caught.exception.payload, raw.payload)
+        self.assertEqual(caught.exception.error, raw.error)
 
     async def test_upload_legacy_conflict_is_also_semantic(self):
         raw = self.fail_request(1022)
@@ -162,7 +162,7 @@ class TestFileErrors(IsolatedAsyncioTestCase):
         self.assertIsInstance(caught.exception, SynologyUploadError)
         self.assertEqual(caught.exception.file_name, "file")
         self.assertEqual(caught.exception.error_code, 1022)
-        self.assertIs(caught.exception.payload, raw.payload)
+        self.assertEqual(caught.exception.error, raw.error)
 
     async def test_upload_permission_is_semantic(self):
         raw = self.fail_request(1002)
@@ -203,7 +203,7 @@ class TestFileErrors(IsolatedAsyncioTestCase):
                 self.assertIsInstance(caught.exception, cls)
                 self.assertEqual(caught.exception.file_name, "file")
                 self.assertEqual(caught.exception.error_code, code)
-                self.assertIs(caught.exception.payload, raw.payload)
+                self.assertEqual(caught.exception.error, raw.error)
                 self.assertIs(caught.exception.__cause__, raw)
                 if code in (1032, 1033, 1034, 1035):
                     self.assertIsInstance(
@@ -258,7 +258,7 @@ class TestFileErrors(IsolatedAsyncioTestCase):
         with patch("wcpan.synology._client.asyncio.sleep", new_callable=AsyncMock):
             with self.assertRaises(SynologyNotFoundError) as caught:
                 await self.client.delete(SynologyFileId("file"))
-        self.assertIs(caught.exception.payload, payload)
+        self.assertEqual(caught.exception.error, payload["result"]["errors"][0])
         self.assertEqual(caught.exception.__cause__.error_code, 1003)
 
     async def test_malformed_task_results_raise_protocol_error(self):
@@ -280,4 +280,5 @@ class TestFileErrors(IsolatedAsyncioTestCase):
                 ):
                     with self.assertRaises(SynologyProtocolError) as caught:
                         await self.client.wait_task("task")
-                    self.assertIs(caught.exception.payload, data)
+                    self.assertIsNone(caught.exception.error)
+                    self.assertFalse(hasattr(caught.exception, "payload"))

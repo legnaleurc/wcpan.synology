@@ -29,7 +29,7 @@ class TestUploadCleanup(IsolatedAsyncioTestCase):
         self.assertIs(caught.exception, error)
         self.assertIs(caught.exception.__cause__, cause)
         self.assertIs(source.error, error)
-        self.assertTrue(any("close failed" in note for note in error.__notes__))
+        self.assertTrue(any("RuntimeError" in note for note in error.__notes__))
 
     async def test_cleanup_failure_after_success_is_reported(self):
         cleanup_error = RuntimeError("close failed")

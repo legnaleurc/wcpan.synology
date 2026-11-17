@@ -106,8 +106,8 @@ file part includes it, matching behavior verified against Synology servers.
 
 Errors from typed Files RPC methods use Synology-specific exceptions, not Python's
 local filesystem exceptions. They inherit `SynologyApiError` and retain
-`error_code`, the original response in `payload`, and the underlying error as
-`__cause__` when translated:
+`error_code`, the credential-censored parsed `error` object, `operation`,
+`http_status` when available, and the underlying error as `__cause__` when translated:
 
 | Drive Files codes | Exception / behavior |
 | --- | --- |
@@ -146,12 +146,13 @@ The CLI `files download` command consumes the stream and prints JSON containing
 the HTTP `status`, `headers`, and received byte count (`size`). It does not save
 the file contents or parse them as JSON.
 
-Upload connection failures raise `SynologyNetworkError`, preserving the original
-error for retry decisions. Folder creation, rename, and upload retain the
+Upload connection failures raise `SynologyNetworkError`, preserving safe
+transport details (`original_error.error_type` and optional `errno`) and HTTP
+status for retry decisions. Raw transport exceptions are not retained. Folder creation, rename, and upload retain the
 existing `SynologyUploadConflictError` for code 1022; it is also a
 `SynologyConflictError`. Recognized upload failures inherit both
 `SynologyUploadError` and their semantic exception, and retain `file_name`,
-`error_code`, and `payload`. Invalid names, oversized files, and excessive path
+`error_code`, and `error`. Invalid names, oversized files, and excessive path
 or name lengths also inherit `SynologyPermanentUploadError` (`retryable = False`).
 The contextual name-too-long class is `SynologyUploadNameTooLongError`, also a
 `SynologyNameTooLongError`, with `reason = "name_too_long"`; create/rename retain
@@ -165,12 +166,24 @@ Cleanup failures preserve an existing error or cancellation and are attached
 as exception notes. Otherwise the cleanup error is raised.
 
 Login transport failures raise `SynologyNetworkError`; rejected logins raise
-`SynologyAuthenticationError`, retaining the server code and payload.
+`SynologyAuthenticationError`, retaining the server code and parsed `error` object.
 Malformed RPC envelopes, invalid JSON, missing login tokens, and invalid lookup
 or task data raise `SynologyProtocolError` (a `SynologyApiError`). Upload protocol
 errors also inherit `SynologyUploadError`. Generic `call()` permits empty
 successful data; `get_file()` requires a file object. All exceptions are available
 from `wcpan.synology`.
+
+Stored SID, password, and OTP values use a wrapper that formats as `[REDACTED]`.
+Parsed error objects, JSON diagnostics, and CLI JSON output mask known
+credential fields. Transport failures retain safe metadata rather than raw URLs.
+See [credential redaction](docs/error-model.md#credential-redaction) for scope.
+
+Full response bodies are not attached to exceptions. The former `.payload` field
+is replaced by `.error`, which contains only structured API error details.
+Optional redacted response previews (up to 4096 characters) use the
+`wcpan.synology` logger at DEBUG. Non-JSON response text is omitted.
+Applications configure logging; see
+[response diagnostics](docs/error-model.md#optional-response-diagnostics).
 
 ## Development
 

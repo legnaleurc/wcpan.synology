@@ -1,5 +1,11 @@
+from typing import Any
+
+from ._redact import redact
+
+
 class SynologyError(Exception):
-    pass
+    def __init__(self, *args: object) -> None:
+        super().__init__(*(redact(arg) for arg in args))
 
 
 class SynologyApiError(SynologyError):
@@ -8,11 +14,15 @@ class SynologyApiError(SynologyError):
         message: str,
         *,
         error_code: int | None = None,
-        payload: object | None = None,
+        error: dict[str, Any] | None = None,
+        operation: str | None = None,
+        http_status: int | None = None,
     ) -> None:
         super().__init__(message)
         self.error_code = error_code
-        self.payload = payload
+        self.error: dict[str, Any] | None = redact(error)
+        self.operation: str | None = redact(operation)
+        self.http_status = http_status
 
 
 class SynologyAuthenticationError(SynologyApiError):
@@ -75,10 +85,30 @@ class SynologyLockedError(SynologyApiError):
     """The node is locked."""
 
 
+class SynologyTransportError(Exception):
+    """Safe transport failure details, without a request URL or response body."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error_type = type(error).__name__
+        self.errno = error.errno if isinstance(error, OSError) else None
+        super().__init__(self.error_type)
+
+
 class SynologyNetworkError(SynologyError):
-    def __init__(self, message: str, original_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        original_error: Exception | None = None,
+        *,
+        operation: str | None = None,
+        http_status: int | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.original_error = original_error
+        self.operation: str | None = redact(operation)
+        self.http_status = http_status
+        self.error: dict[str, Any] | None = redact(error)
 
 
 class SynologyUploadError(SynologyApiError):
@@ -88,9 +118,17 @@ class SynologyUploadError(SynologyApiError):
         *,
         file_name: str | None = None,
         error_code: int | None = None,
-        payload: object | None = None,
+        error: dict[str, Any] | None = None,
+        operation: str | None = None,
+        http_status: int | None = None,
     ) -> None:
-        super().__init__(message, error_code=error_code, payload=payload)
+        super().__init__(
+            message,
+            error_code=error_code,
+            error=error,
+            operation=operation,
+            http_status=http_status,
+        )
         self.file_name = file_name
 
 

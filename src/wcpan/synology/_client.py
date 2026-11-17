@@ -85,7 +85,9 @@ class DefaultSynologyClient(SynologyClient):  # pyright: ignore[reportUnusedClas
             raise mapped from exc
         if api == WEBHOOKS_API and method == "delete":
             return data
-        return response_object(data, f"{api}.{method} returned no object")
+        return response_object(
+            data, f"{api}.{method} returned no object", operation=f"{api}.{method}"
+        )
 
     async def get_file(self, path: SynologyLookupRef) -> SynologyFileInfo:
         data = await self._request(
@@ -140,14 +142,18 @@ class DefaultSynologyClient(SynologyClient):  # pyright: ignore[reportUnusedClas
                     f"Folder {name!r} already exists",
                     file_name=name,
                     error_code=exc.error_code,
-                    payload=exc.payload,
+                    error=exc.error,
+                    operation=exc.operation,
+                    http_status=exc.http_status,
                 ) from (exc.__cause__ or exc)
             if exc.error_code == 1035:
                 raise SynologyUploadNameTooLongError(
                     f"File name is too long for Synology Drive: {name!r}",
                     file_name=name,
                     error_code=exc.error_code,
-                    payload=exc.payload,
+                    error=exc.error,
+                    operation=exc.operation,
+                    http_status=exc.http_status,
                 ) from (exc.__cause__ or exc)
             raise
         return data
@@ -172,14 +178,18 @@ class DefaultSynologyClient(SynologyClient):  # pyright: ignore[reportUnusedClas
                     f"Rename conflict for {new_name!r}",
                     file_name=new_name,
                     error_code=exc.error_code,
-                    payload=exc.payload,
+                    error=exc.error,
+                    operation=exc.operation,
+                    http_status=exc.http_status,
                 ) from (exc.__cause__ or exc)
             if exc.error_code == 1035:
                 raise SynologyUploadNameTooLongError(
                     f"File name is too long for Synology Drive: {new_name!r}",
                     file_name=new_name,
                     error_code=exc.error_code,
-                    payload=exc.payload,
+                    error=exc.error,
+                    operation=exc.operation,
+                    http_status=exc.http_status,
                 ) from (exc.__cause__ or exc)
             raise
         return data
@@ -209,7 +219,7 @@ class DefaultSynologyClient(SynologyClient):  # pyright: ignore[reportUnusedClas
         await self.wait_task(response_field(data, "async_task_id", str))
 
     async def wait_task(self, task_id: str) -> None:
-        """Wait for a Files operation; payloads on failure contain task data."""
+        """Wait for a Files operation; failures retain the first parsed task error."""
         for delay in TASK_POLL_DELAYS:
             await asyncio.sleep(delay)
             data = response_object(
@@ -220,41 +230,60 @@ class DefaultSynologyClient(SynologyClient):  # pyright: ignore[reportUnusedClas
                     task_id=task_id,
                 ),
                 "Invalid task response",
+                operation=f"{TASKS_API}.get",
             )
             if not isinstance(data.get("status"), str):
-                raise SynologyProtocolError("Invalid task response", payload=data)
+                raise SynologyProtocolError(
+                    "Invalid task response", operation=f"{TASKS_API}.get"
+                )
             if data["status"] != "finished":
                 continue
             result = data.get("result")
             if result is None:
                 errors = []
             else:
-                result = response_object(result, "Invalid task result", payload=data)
+                result = response_object(
+                    result, "Invalid task result", operation=f"{TASKS_API}.get"
+                )
                 if "errors" not in result:
-                    raise SynologyProtocolError("Invalid task result", payload=data)
+                    raise SynologyProtocolError(
+                        "Invalid task result", operation=f"{TASKS_API}.get"
+                    )
                 # A finished delete reports success as `null`, others as `[]`.
                 reported: object = result["errors"]
                 if reported is None:
                     reported = []
                 if not isinstance(reported, list):
-                    raise SynologyProtocolError("Invalid task result", payload=data)
+                    raise SynologyProtocolError(
+                        "Invalid task result", operation=f"{TASKS_API}.get"
+                    )
                 errors = cast(list[Any], reported)
             for entry in errors:
-                error = response_object(entry, "Invalid task error", payload=data)
+                error = response_object(
+                    entry, "Invalid task error", operation=f"{TASKS_API}.get"
+                )
                 if type(error.get("code")) is not int or (
                     "message" in error and not isinstance(error["message"], str)
                 ):
-                    raise SynologyProtocolError("Invalid task errors", payload=data)
+                    raise SynologyProtocolError(
+                        "Invalid task errors", operation=f"{TASKS_API}.get"
+                    )
             if errors:
                 code = errors[0]["code"]
-                message = errors[0].get("message", "task failed")
-                raw = SynologyApiError(message, error_code=code, payload=data)
+                raw = SynologyApiError(
+                    "Files task failed with code " + str(code),
+                    error_code=code,
+                    error=errors[0],
+                    operation=f"{TASKS_API}.get",
+                )
                 mapped = file_error(raw)
                 if mapped is raw:
                     raise raw
                 raise mapped from raw
             return
-        raise SynologyApiError(f"Task {task_id!r} did not finish in time")
+        raise SynologyApiError(
+            "Task did not finish in time", operation=f"{TASKS_API}.get"
+        )
 
     async def upload(
         self,
@@ -291,6 +320,9 @@ class DefaultSynologyClient(SynologyClient):  # pyright: ignore[reportUnusedClas
                 raise SynologyNetworkError(
                     f"Upload failed for {name!r}: {exc}",
                     original_error=exc.original_error or exc,
+                    operation=exc.operation,
+                    http_status=exc.http_status,
+                    error=exc.error,
                 ) from exc
             if source.error is not None:
                 raise source.error

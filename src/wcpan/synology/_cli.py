@@ -7,8 +7,9 @@ import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
+from ._redact import redact
 from .lib import create_client
 
 
@@ -33,6 +34,32 @@ def apply_env_fallbacks(
             setattr(args, name, environ.get(env_name))
 
 
+class CensoredArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> NoReturn:
+        # Keep argparse's reason, but omit values it echoes from argv.
+        if message.startswith("unrecognized arguments:"):
+            message = "unrecognized arguments (values omitted)"
+        elif ": invalid choice:" in message:
+            message = (
+                message.split(": invalid choice:", 1)[0]
+                + ": invalid choice (see usage for choices)"
+            )
+        elif message.startswith("argument ") and " value: " in message:
+            message = message.split(" value: ", 1)[0] + " value (omitted)"
+        elif ": ignored explicit argument " in message:
+            message = (
+                message.split(": ignored explicit argument ", 1)[0]
+                + ": unexpected value (omitted)"
+            )
+        elif not (
+            message.startswith("the following arguments are required:")
+            or message.startswith("argument ")
+            or message.startswith("one of the arguments ")
+        ):
+            message = "invalid arguments (values omitted)"
+        super().error(message)
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -45,7 +72,7 @@ def main() -> None:
 def build_parser() -> argparse.ArgumentParser:
     auth_parent = build_auth_parent_parser()
     subcommand_auth_parent = build_auth_parent_parser(suppress_defaults=True)
-    parser = argparse.ArgumentParser(
+    parser = CensoredArgumentParser(
         prog="wcpan-synology",
         description="Synology WebStation API client and inspector.",
         parents=[auth_parent],
@@ -70,7 +97,7 @@ def build_auth_parent_parser(
     *, suppress_defaults: bool = False
 ) -> argparse.ArgumentParser:
     # Subcommands must preserve auth values already parsed at an outer level.
-    parser = argparse.ArgumentParser(
+    parser = CensoredArgumentParser(
         add_help=False,
         argument_default=argparse.SUPPRESS if suppress_defaults else None,
     )
@@ -202,7 +229,13 @@ async def run_client_command(args: argparse.Namespace) -> None:
         otp_code=args.otp_code,
     ) as client:
         payload = await dispatch_command(client, args)
-    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    print(
+        json.dumps(
+            redact(payload),
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
 
 
 async def dispatch_command(client: Any, args: argparse.Namespace) -> Any:
@@ -271,7 +304,7 @@ def parse_params(raw_params: list[str]) -> dict[str, Any]:
     parsed = {}
     for raw_param in raw_params:
         if "=" not in raw_param:
-            raise SystemExit(f"invalid --param value: {raw_param!r}")
+            raise SystemExit("invalid --param value: expected KEY=JSON")
         key, raw_value = raw_param.split("=", 1)
         try:
             value = json.loads(raw_value)
@@ -285,7 +318,7 @@ def parse_json_value(raw_value: str) -> Any:
     try:
         return json.loads(raw_value)
     except json.JSONDecodeError as exc:
-        raise SystemExit(f"invalid JSON value: {raw_value!r}: {exc}") from exc
+        raise SystemExit(f"invalid JSON value: {exc}") from exc
 
 
 def generic_param_argument() -> dict[str, Any]:
